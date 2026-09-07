@@ -1,0 +1,59 @@
+plugins {
+    id "com.android.application"
+}
+
+def repositoryDir = rootProject.projectDir.parentFile
+def generatedAar = layout.projectDirectory.file("libs/multiscreen.aar")
+
+android {
+    namespace "com.olivierh59500.multiscreen"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "com.olivierh59500.multiscreen"
+        minSdk 23
+        targetSdk 36
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            keepDebugSymbols += ["**/libgojni.so"]
+        }
+    }
+
+    lint {
+        disable += "AndroidGradlePluginVersion"
+    }
+}
+
+tasks.register("buildEbitenAar", Exec) {
+    workingDir repositoryDir
+    commandLine "sh", new File(repositoryDir, "scripts/build-android-aar.sh").absolutePath,
+        generatedAar.asFile.absolutePath
+    inputs.files(fileTree(repositoryDir) {
+        include "go.mod", "go.sum", "main.go", "assets/**", "mobile/**"
+        exclude "**/*_test.go"
+    })
+    outputs.file(generatedAar)
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(tasks.named("buildEbitenAar"))
+}
+
+dependencies {
+    implementation files("libs/multiscreen.aar")
+}
