@@ -50,17 +50,22 @@ elif ! javac -version >/dev/null 2>&1; then
 fi
 
 ebitenmobile_bin=${EBITENMOBILE:-}
-if [ -z "$ebitenmobile_bin" ]; then
-	ebitenmobile_bin=$(command -v ebitenmobile || true)
-fi
-if [ -z "$ebitenmobile_bin" ]; then
-	go_path=$(go env GOPATH)
-	ebitenmobile_bin="$go_path/bin/ebitenmobile"
-fi
-if [ ! -x "$ebitenmobile_bin" ]; then
-	echo "ebitenmobile not found. Run: go install github.com/hajimehoshi/ebiten/v2/cmd/ebitenmobile@v2.9.6" >&2
+if [ -n "$ebitenmobile_bin" ] && [ ! -x "$ebitenmobile_bin" ]; then
+	echo "EBITENMOBILE does not point to an executable: $ebitenmobile_bin" >&2
 	exit 1
 fi
+
+run_ebitenmobile() {
+	if [ -n "$ebitenmobile_bin" ]; then
+		"$ebitenmobile_bin" "$@"
+	else
+		# The tool directive in go.mod keeps the generator aligned with the
+		# Ebitengine library version used by the application.
+		go tool ebitenmobile "$@"
+	fi
+}
+
+ebitenmobile_target=${EBITENMOBILE_TARGET:-android}
 
 android_ndk=${ANDROID_NDK_HOME:-}
 if [ -z "$android_ndk" ] && [ -d "$android_sdk/ndk" ]; then
@@ -74,8 +79,8 @@ cd "$repository_dir"
 ANDROID_HOME="$android_sdk" \
 ANDROID_NDK_HOME="$android_ndk" \
 GOCACHE="$go_cache" \
-"$ebitenmobile_bin" bind \
-	-target android \
+run_ebitenmobile bind \
+	-target "$ebitenmobile_target" \
 	-androidapi 23 \
 	-javapkg com.olivierh59500.multiscreen \
 	-trimpath \

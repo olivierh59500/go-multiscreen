@@ -10,6 +10,7 @@ import (
 )
 
 func init() {
+	ebiten.SetScreenClearedEveryFrame(false)
 	mobile.SetGame(&game{})
 }
 

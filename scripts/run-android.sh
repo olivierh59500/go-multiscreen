@@ -50,12 +50,23 @@ if ! "$adb_bin" get-state >/dev/null 2>&1; then
 	exit 1
 fi
 
+device_abi=$("$adb_bin" shell getprop ro.product.cpu.abi | tr -d '\r')
+case "$device_abi" in
+	arm64-v8a) EBITENMOBILE_TARGET=android/arm64 ;;
+	armeabi-v7a) EBITENMOBILE_TARGET=android/arm ;;
+	x86) EBITENMOBILE_TARGET=android/386 ;;
+	x86_64) EBITENMOBILE_TARGET=android/amd64 ;;
+	*) EBITENMOBILE_TARGET=android ;;
+esac
+export EBITENMOBILE_TARGET
+
 cd "$repository_dir/android"
 ANDROID_HOME="$android_sdk" \
 ANDROID_SDK_ROOT="$android_sdk" \
 JAVA_HOME="$java_home" \
 PATH="$java_home/bin:$PATH" \
-./gradlew --no-daemon :app:installDebug
+EBITENMOBILE_TARGET="$EBITENMOBILE_TARGET" \
+./gradlew --no-daemon :app:clean :app:installDebug
 
 "$adb_bin" shell am force-stop com.olivierh59500.multiscreen
 "$adb_bin" shell am start -n com.olivierh59500.multiscreen/.MainActivity

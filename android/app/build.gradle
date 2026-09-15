@@ -4,6 +4,7 @@ plugins {
 
 def repositoryDir = rootProject.projectDir.parentFile
 def generatedAar = layout.projectDirectory.file("libs/multiscreen.aar")
+def ebitenMobileTarget = providers.environmentVariable("EBITENMOBILE_TARGET").orElse("android")
 
 android {
     namespace "com.olivierh59500.multiscreen"
@@ -47,6 +48,7 @@ tasks.register("buildEbitenAar", Exec) {
         include "go.mod", "go.sum", "main.go", "assets/**", "mobile/**"
         exclude "**/*_test.go"
     })
+    inputs.property("ebitenMobileTarget", ebitenMobileTarget)
     outputs.file(generatedAar)
 }
 

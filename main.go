@@ -10,9 +10,7 @@ import (
 	"io"
 	"log"
 	"math"
-	"sort"
 	"sync"
-	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/audio"
@@ -30,6 +28,35 @@ const (
 	viewDuration       = 7.0 // seconds per demo
 	transitionDuration = 4.0 // seconds for transitions
 )
+
+const compositeShaderSource = `//kage:unit pixels
+
+package main
+
+var CameraCenter vec2
+var CameraZoom float
+
+func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
+	screenPos := srcPos - imageSrc0Origin()
+	worldPos := (screenPos - vec2(400, 300)) / CameraZoom + CameraCenter
+	if worldPos.x < 0 || worldPos.y < 0 || worldPos.x >= 1600 || worldPos.y >= 1200 {
+		return vec4(0, 0, 0, 1)
+	}
+
+	sourceOrigin := imageSrc0Origin()
+	if worldPos.y < 600 {
+		if worldPos.x < 800 {
+			return imageSrc0UnsafeAt(sourceOrigin + worldPos)
+		}
+		return imageSrc1UnsafeAt(sourceOrigin + worldPos - vec2(800, 0))
+	}
+
+	if worldPos.x < 800 {
+		return imageSrc3UnsafeAt(sourceOrigin + worldPos - vec2(0, 600))
+	}
+	return imageSrc2UnsafeAt(sourceOrigin + worldPos - vec2(800, 600))
+}
+`
 
 //go:embed assets/music.ym
 var musicData []byte
@@ -52,14 +79,10 @@ const (
 
 // YMPlayer wraps the YM player for Ebiten audio
 type YMPlayer struct {
-	player       *stsound.StSound
-	sampleRate   int
-	buffer       []int16
-	mutex        sync.Mutex
-	position     int64
-	totalSamples int64
-	loop         bool
-	volume       float64
+	player *stsound.StSound
+	buffer []int16
+	mutex  sync.Mutex
+	loop   bool
 }
 
 func NewYMPlayer(data []byte, sampleRate int, loop bool) (*YMPlayer, error) {
@@ -72,16 +95,10 @@ func NewYMPlayer(data []byte, sampleRate int, loop bool) (*YMPlayer, error) {
 
 	player.SetLoopMode(loop)
 
-	info := player.GetInfo()
-	totalSamples := int64(info.MusicTimeInMs) * int64(sampleRate) / 1000
-
 	return &YMPlayer{
-		player:       player,
-		sampleRate:   sampleRate,
-		buffer:       make([]int16, 4096),
-		totalSamples: totalSamples,
-		loop:         loop,
-		volume:       0.5,
+		player: player,
+		buffer: make([]int16, 4096),
+		loop:   loop,
 	}, nil
 }
 
@@ -106,7 +123,9 @@ func (y *YMPlayer) Read(p []byte) (n int, err error) {
 		}
 
 		for i := 0; i < chunkSize; i++ {
-			sample := int16(float64(y.buffer[i]) * y.volume)
+			// The demo volume is fixed at 50%. Integer division has the same
+			// truncation-toward-zero result as the former float64 conversion.
+			sample := y.buffer[i] / 2
 			offset := (processed + i) * 4
 			p[offset] = byte(sample)
 			p[offset+1] = byte(sample >> 8)
@@ -115,7 +134,6 @@ func (y *YMPlayer) Read(p []byte) (n int, err error) {
 		}
 
 		processed += chunkSize
-		y.position += int64(chunkSize)
 	}
 
 	return samplesNeeded * 4, err
@@ -137,7 +155,8 @@ func easeInOutCubic(t float64) float64 {
 	if t < 0.5 {
 		return 4 * t * t * t
 	}
-	return 1 - math.Pow(-2*t+2, 3)/2
+	u := -2*t + 2
+	return 1 - u*u*u/2
 }
 
 // ==================== PHENOMENA DEMO (Demo1) ====================
@@ -160,18 +179,16 @@ type PhenomenaDemo struct {
 	initialized bool
 
 	// Images
-	imgRasterbar *ebiten.Image
-	imgFont      *ebiten.Image
-	imgLogo      *ebiten.Image
-	imgPhoton    *ebiten.Image
-	imgTextPage1 *ebiten.Image
-	imgTextPage2 *ebiten.Image
+	imgRasterbar  *ebiten.Image
+	imgFont       *ebiten.Image
+	imgLogo       *ebiten.Image
+	imgPhoton     *ebiten.Image
+	imgPhotonMask *ebiten.Image
+	imgTextPage1  *ebiten.Image
+	imgTextPage2  *ebiten.Image
 
 	// Animation canvases
 	cnvFrames     *ebiten.Image
-	cnvScroller   *ebiten.Image
-	cnvPhoton     *ebiten.Image
-	cnvLogoWhite  *ebiten.Image
 	rasterGrad640 *ebiten.Image
 	rasterGrad800 *ebiten.Image
 
@@ -181,7 +198,7 @@ type PhenomenaDemo struct {
 	sliceCount       int
 	pause            bool
 	pauseTime        int
-	scrollSpeed      float64
+	scrollSpeed      int
 	rotSpeed         float64
 	color            float64
 	percent          float64
@@ -195,19 +212,21 @@ type PhenomenaDemo struct {
 	scrollerRotation float64
 
 	// Scroller data
-	scrollChars    []ScrollChar
+	scrollChars    [240]ScrollChar
+	scrollHead     int
 	scrollVertices []ebiten.Vertex
 	scrollIndices  []uint16
+	sineOffsets    [240]float64
 }
 
 type ScrollChar struct {
-	char  string
-	frame int
-	slice int
+	glyph uint8
+	frame uint8
+	slice uint8
 }
 
 type GradientStop struct {
-	Color  color.Color
+	Color  color.RGBA
 	Offset float64
 }
 
@@ -234,14 +253,9 @@ var (
 	}
 )
 
-var charsetPhenomena = []string{
-	" ", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K",
-	"L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V",
-	"W", "X", "Y", "Z", "0", "1", "2", "3", "4", "5", "6",
-	"7", "8", "9", "!", "'", "?", "/", ",", ".", "-", "@",
-}
+const charsetPhenomena = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!'?/,.-@"
 
-var ctrlChars = []string{"^", "#", "&", "%"}
+var phenomenaWaveSinStep, phenomenaWaveCosStep = math.Sincos(1.0 / 36.0)
 
 const scrollMessage = `           THIS IS IMPOSSIBLE!            WHAT IS?               THIS IS!!!                    ...SO, ANOTHER DEMO FROM PHENOMENA HAS REACHED YOU...    THIS TIME WITH CODING BY                PHOTON!                ^  RASTA MUSIC BY                    FIREFOX!                &    AND SUPER GFX BY                       TERMINATOR               #  ...SO, SLAYER! HOW DO YOU LIKE @MY@ SCROLLER?  IT'S MUCH IMPOSSIBLER THAN YOURS!    ...   SO DE SO!          DOES ANYONE HAVE A PROGRAM CALLED 'PAGE RENDER 3D'? THEN CONTACT OUR NEW GFX ARTIST AT          0492-41027               % AND ASK FOR MIKAEL. NEWS NEWS NEWS NEWS   !!! LOOK OUT FOR PHENOMENA'S NEW DISK MAG CALLED ' TRANSMISSION ' ! ! ! ! IT'S A MAG ESPECIALLY MADE FOR ALL YOU CODERS OUT THERE, COMPLETE WITH CODER / DEMO / CRACK TOP-TEN,ARTICLES ABOUT CODING / CRACKING, AND SOURCES, ETC,ETC...         HERE'S MY TOP-FIVE DEMO GROUPS 1. SCOOPEX  -SLAYER IS WORKING HARD AND HIS M.H. DEMO IS STILL UNBEATEN-  ...  2. CRYPTOBURNERS  -NICE MD 2 BUT SLOOOW VECTORS-  ... 3. RSI/PARADOX  -NICE DEMOS LATELY, EXCEPT FOR THE 'FOLLOW ME' CRAP-  ...  4. KEFRENS  -ALL YOUR LATEST DEMOS HAVE BEEN PROFESSIONAL!-  ...  5. THE LINK  -ALWAYS COOL IDEAS,GIVE US SOME MORE-  ...  OF COURSE, PHENOMENA IS EXCLUDED FROM THIS LIST...        NOW OVER TO SOME INTERNAL GREETS...  @     BIG 2A-FINISH YOUR DEMO AND BUY AN A500!   @   CORE-GET YOUR HANDS ON A WORKING AMIGA!   @   DANKO-GET BUSY!   @   KLUTTAS O SPIRIT-WAKE UP FROM YOUR COMA!!!!   @   RAVE-SAME TO YOU!       ...     AND NOW, TIME FOR SOME OTHER GREETS... THEY GO TO --- CONAN/TPL-MAKE A GOOD DEMO AND JOIN ANOTHER GROUP!   @   KALLE BALLE/TSL - EVER THOUGHT ABOUT CHANGING YOUR NAME????   @   HAVOK/ECSTASY-JOIN US! I'M JUST A PHONECALL AWAY - 0381-11344 @   MAHONEY/NS-TRY TAKING SOME IDEAS FROM NT 1.2!  @   UNCLE TOM/RAZOR-STOP DRAWING AND DO SOME MUSIC @   SLAYER/SCX-AND ALL OTHER GOOD CODERS-CALL ME FOR SOME COOL TECH-TALK    0381-11344   ZEUS/ADEPT-GOOD LUCK AND CODE HARD!       ---     NOW I DON'T HAVE VERY MUCH ELSE TO SAY, EXCEPT....                    BYE!             @@@@@@@@@@@@@                `
 
@@ -261,7 +275,7 @@ func NewPhenomenaDemo() *PhenomenaDemo {
 		state:            StateMainDemoPhe, // Start directly at main demo
 		pauseTime:        250,
 		rotSpeed:         0.35,
-		scrollSpeed:      1.0,
+		scrollSpeed:      1,
 		blackRectWidth:   800,
 		blackRectShow:    false, // No black rect at start
 		photonY:          184,
@@ -269,13 +283,12 @@ func NewPhenomenaDemo() *PhenomenaDemo {
 		rasterbarY:       -40,
 		direction:        1,
 		scrollerRotation: 0,
-		scrollChars:      make([]ScrollChar, 240),
 		scrollVertices:   make([]ebiten.Vertex, 0, 240*4),
 		scrollIndices:    make([]uint16, 0, 240*6),
 	}
 
-	for i := range d.scrollChars {
-		d.scrollChars[i] = ScrollChar{char: " ", frame: 0, slice: 0}
+	for i := range d.sineOffsets {
+		d.sineOffsets[i] = math.Sin(float64(i)*0.05) * 15
 	}
 
 	return d
@@ -286,14 +299,19 @@ func (d *PhenomenaDemo) Init() error {
 		return nil
 	}
 
-	var err error
+	var (
+		err error
+		img image.Image
+	)
 
 	// Load images
-	img, _, err := image.Decode(bytes.NewReader(demo1RasterbarData))
-	if err != nil {
-		return err
+	if d.state != StateMainDemoPhe {
+		img, _, err = image.Decode(bytes.NewReader(demo1RasterbarData))
+		if err != nil {
+			return err
+		}
+		d.imgRasterbar = ebiten.NewImageFromImage(img)
 	}
-	d.imgRasterbar = ebiten.NewImageFromImage(img)
 
 	img, _, err = image.Decode(bytes.NewReader(demo1FontData))
 	if err != nil {
@@ -312,11 +330,13 @@ func (d *PhenomenaDemo) Init() error {
 		return err
 	}
 	d.imgPhoton = ebiten.NewImageFromImage(img)
-	d.rasterGrad640 = createGradient(640, 12, gdcRasterBar)
+	d.imgPhotonMask = newWhiteAlphaMask(img)
 	d.rasterGrad800 = createGradient(800, 12, gdcRasterBar)
 
-	// Init text pages
-	d.initTextPages()
+	if d.state != StateMainDemoPhe {
+		d.rasterGrad640 = createGradient(640, 12, gdcRasterBar)
+		d.initTextPages()
+	}
 
 	// Init character frames
 	d.initCharacterFrames()
@@ -395,19 +415,35 @@ func (d *PhenomenaDemo) makeIntroText(mode string, backColor color.Color, texts 
 }
 
 func charToFontIndexPhe(ch rune) (int, bool) {
-	charStr := string(ch)
-
 	if ch >= 'a' && ch <= 'z' {
-		charStr = string(ch - 32)
+		ch -= 'a' - 'A'
 	}
-
-	for i, c := range charsetPhenomena {
-		if c == charStr {
-			return i, true
-		}
+	switch {
+	case ch == ' ':
+		return 0, true
+	case ch >= 'A' && ch <= 'Z':
+		return int(ch-'A') + 1, true
+	case ch >= '0' && ch <= '9':
+		return int(ch-'0') + 27, true
+	case ch == '!':
+		return 37, true
+	case ch == '\'':
+		return 38, true
+	case ch == '?':
+		return 39, true
+	case ch == '/':
+		return 40, true
+	case ch == ',':
+		return 41, true
+	case ch == '.':
+		return 42, true
+	case ch == '-':
+		return 43, true
+	case ch == '@':
+		return 44, true
+	default:
+		return 0, false
 	}
-
-	return 0, false
 }
 
 func createGradient(width, height int, stops []GradientStop) *ebiten.Image {
@@ -416,7 +452,7 @@ func createGradient(width, height int, stops []GradientStop) *ebiten.Image {
 	for y := 0; y < height; y++ {
 		t := float64(y) / float64(height-1)
 
-		var c color.Color
+		var c color.RGBA
 		for i := 0; i < len(stops)-1; i++ {
 			if t >= stops[i].Offset && t <= stops[i+1].Offset {
 				localT := (t - stops[i].Offset) / (stops[i+1].Offset - stops[i].Offset)
@@ -425,22 +461,44 @@ func createGradient(width, height int, stops []GradientStop) *ebiten.Image {
 			}
 		}
 
-		for x := 0; x < width; x++ {
-			img.Set(x, y, c)
+		row := img.Pix[y*img.Stride : y*img.Stride+width*4]
+		for x := 0; x < len(row); x += 4 {
+			row[x] = c.R
+			row[x+1] = c.G
+			row[x+2] = c.B
+			row[x+3] = c.A
 		}
 	}
 
 	return ebiten.NewImageFromImage(img)
 }
 
-func lerpColor(c1, c2 color.Color, t float64) color.Color {
-	r1, g1, b1, a1 := c1.RGBA()
-	r2, g2, b2, a2 := c2.RGBA()
+// newWhiteAlphaMask preserves a source image's silhouette while making every
+// visible pixel white. Tinting this with ColorScale is equivalent to replacing
+// RGB with a flat colour through ColorM, but it keeps Ebitengine's standard
+// shader and therefore remains batchable with adjacent sprites.
+func newWhiteAlphaMask(source image.Image) *ebiten.Image {
+	bounds := source.Bounds()
+	mask := image.NewNRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		row := mask.Pix[(y-bounds.Min.Y)*mask.Stride:]
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			_, _, _, alpha := source.At(x, y).RGBA()
+			offset := (x - bounds.Min.X) * 4
+			row[offset] = 0xff
+			row[offset+1] = 0xff
+			row[offset+2] = 0xff
+			row[offset+3] = uint8(alpha >> 8)
+		}
+	}
+	return ebiten.NewImageFromImage(mask)
+}
 
-	r := uint8((float64(r1>>8)*(1-t) + float64(r2>>8)*t))
-	g := uint8((float64(g1>>8)*(1-t) + float64(g2>>8)*t))
-	b := uint8((float64(b1>>8)*(1-t) + float64(b2>>8)*t))
-	a := uint8((float64(a1>>8)*(1-t) + float64(a2>>8)*t))
+func lerpColor(c1, c2 color.RGBA, t float64) color.RGBA {
+	r := uint8(float64(c1.R)*(1-t) + float64(c2.R)*t)
+	g := uint8(float64(c1.G)*(1-t) + float64(c2.G)*t)
+	b := uint8(float64(c1.B)*(1-t) + float64(c2.B)*t)
+	a := uint8(float64(c1.A)*(1-t) + float64(c2.A)*t)
 
 	return color.RGBA{r, g, b, a}
 }
@@ -449,9 +507,14 @@ func (d *PhenomenaDemo) initCharacterFrames() {
 	cnvRedBar := createGradient(480, 9, gdcRedBar)
 	cnvSilverBar := createGradient(480, 33, gdcSilverBar)
 	cnvPurpleBar := createGradient(480, 33, gdcPurpleBar)
+	defer cnvRedBar.Dispose()
+	defer cnvSilverBar.Dispose()
+	defer cnvPurpleBar.Dispose()
 
 	cnvFont := ebiten.NewImage(len(charsetPhenomena)*16, 33)
 	cnvFont2 := ebiten.NewImage(len(charsetPhenomena)*16, 33)
+	defer cnvFont.Dispose()
+	defer cnvFont2.Dispose()
 
 	cnvFont.Fill(color.RGBA{0, 0, 0, 0})
 	cnvFont2.Fill(color.RGBA{0, 0, 0, 0})
@@ -538,40 +601,35 @@ func (d *PhenomenaDemo) initCharacterFrames() {
 		op.GeoM.Reset()
 		op.GeoM.Translate(0, float64(frameY))
 		d.cnvFrames.DrawImage(tmpSilver, op)
+
+		cnvSilverChars.Dispose()
+		cnvPurpleChars.Dispose()
+		tmpSilver.Dispose()
+		tmpPurple.Dispose()
 	}
 
-	d.cnvScroller = ebiten.NewImage(480, 180)
-	d.cnvPhoton = ebiten.NewImage(70, 15)
-	d.cnvLogoWhite = ebiten.NewImage(640, 129)
 }
 
-func (d *PhenomenaDemo) scrollMessage(speed float64) {
-	for i := 0; i < int(speed); i++ {
-		chStr := string(scrollMessage[d.msgIndex])
-
-		isCtrl := false
-		for _, ctrl := range ctrlChars {
-			if chStr == ctrl {
-				isCtrl = true
-				break
-			}
-		}
+func (d *PhenomenaDemo) scrollMessage(speed int) {
+	for i := 0; i < speed; i++ {
+		ch := scrollMessage[d.msgIndex]
+		isCtrl := ch == '^' || ch == '#' || ch == '&' || ch == '%'
 
 		if isCtrl && d.sliceCount == 0 {
-			switch chStr {
-			case "^":
+			switch ch {
+			case '^':
 				d.pause = true
 				d.pauseTime = 275
 				d.rotSpeed = -1
-			case "&":
+			case '&':
 				d.pause = true
 				d.pauseTime = 275
 				d.rotSpeed = 1
-			case "#":
+			case '#':
 				d.pause = true
 				d.pauseTime = 250
 				d.rotSpeed = -1
-			case "%":
+			case '%':
 				d.pause = true
 				d.pauseTime = 225
 				d.rotSpeed = -1
@@ -582,7 +640,7 @@ func (d *PhenomenaDemo) scrollMessage(speed float64) {
 			}
 		} else {
 			d.shiftLeft()
-			d.addSliceOfChar(chStr, d.sliceCount)
+			d.addSliceOfChar(ch, d.sliceCount)
 
 			d.sliceCount++
 			if d.sliceCount > 7 {
@@ -597,18 +655,31 @@ func (d *PhenomenaDemo) scrollMessage(speed float64) {
 }
 
 func (d *PhenomenaDemo) shiftLeft() {
-	for i := 0; i < len(d.scrollChars)-1; i++ {
-		d.scrollChars[i] = d.scrollChars[i+1]
+	d.scrollHead++
+	if d.scrollHead == len(d.scrollChars) {
+		d.scrollHead = 0
 	}
 }
 
-func (d *PhenomenaDemo) addSliceOfChar(ch string, slice int) {
-	f := d.scrollChars[len(d.scrollChars)-2].frame
+func (d *PhenomenaDemo) addSliceOfChar(ch byte, slice int) {
+	previous := d.scrollHead + len(d.scrollChars) - 2
+	if previous >= len(d.scrollChars) {
+		previous -= len(d.scrollChars)
+	}
+	tail := d.scrollHead + len(d.scrollChars) - 1
+	if tail >= len(d.scrollChars) {
+		tail -= len(d.scrollChars)
+	}
+	f := d.scrollChars[previous].frame
+	glyph, ok := charToFontIndexPhe(rune(ch))
+	if !ok {
+		glyph = 0
+	}
 
-	d.scrollChars[len(d.scrollChars)-1] = ScrollChar{
-		char:  ch,
+	d.scrollChars[tail] = ScrollChar{
+		glyph: uint8(glyph),
 		frame: f,
-		slice: slice,
+		slice: uint8(slice),
 	}
 }
 
@@ -622,18 +693,18 @@ func (d *PhenomenaDemo) renderNextFrames(speed float64) {
 	}
 
 	for i := range d.scrollChars {
-		sineOffset := math.Sin(float64(i)*0.05) * 15
-
-		newFrame := d.scrollerRotation + sineOffset
-
-		for newFrame >= 30 {
-			newFrame -= 30
+		index := d.scrollHead + i
+		if index >= len(d.scrollChars) {
+			index -= len(d.scrollChars)
 		}
-		for newFrame < 0 {
+		newFrame := d.scrollerRotation + d.sineOffsets[i]
+		if newFrame >= 30 {
+			newFrame -= 30
+		} else if newFrame < 0 {
 			newFrame += 30
 		}
 
-		d.scrollChars[i].frame = int(newFrame)
+		d.scrollChars[index].frame = uint8(newFrame)
 	}
 }
 
@@ -760,7 +831,6 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 		screen.DrawImage(d.imgTextPage2, op)
 
 	case StateShowLogoPhe:
-		screen.Fill(color.Black)
 		screen.Fill(color.RGBA{0x00, 0x01, 0x11, 0xFF})
 
 		if d.percent <= 100 {
@@ -771,14 +841,12 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 		} else {
 			screen.DrawImage(d.imgLogo, nil)
 
-			d.cnvLogoWhite.Clear()
-			d.cnvLogoWhite.DrawImage(d.imgLogo, nil)
 			op := &ebiten.DrawImageOptions{}
 			op.ColorM.Scale(1, 1, 1, 1)
 			op.ColorM.Translate(1, 1, 1, 0)
 			alpha := (200 - d.percent) / 100.0
 			op.ColorM.Scale(1, 1, 1, alpha)
-			screen.DrawImage(d.cnvLogoWhite, op)
+			screen.DrawImage(d.imgLogo, op)
 		}
 
 	case StateShowUpperRasterbarPhe, StateShowLowerRasterbarPhe, StateDropPhotonPhe, StatePhotonFadeToRedPhe:
@@ -811,16 +879,13 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 
 		if d.state >= StateDropPhotonPhe {
 			if d.state == StatePhotonFadeToRedPhe {
-				d.cnvPhoton.Clear()
-				d.cnvPhoton.DrawImage(d.imgPhoton, nil)
-
 				op := &ebiten.DrawImageOptions{}
 				op.GeoM.Translate(285, 445)
 
 				lightness := d.percent / 100.0
 				op.ColorM.Scale(lightness, lightness*0.5, lightness*0.5, 1)
 
-				screen.DrawImage(d.cnvPhoton, op)
+				screen.DrawImage(d.imgPhoton, op)
 			} else {
 				op := &ebiten.DrawImageOptions{}
 				op.GeoM.Translate(285, d.photonY)
@@ -849,16 +914,12 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 		screen.DrawImage(d.rasterGrad800, op)
 
 		// Draw photon with color cycling (centered)
-		d.cnvPhoton.Clear()
-		d.cnvPhoton.DrawImage(d.imgPhoton, nil)
-
 		op = &ebiten.DrawImageOptions{}
 		hue := d.color / 360.0
 		r, g, b := hslToRGB(hue, 1.0, 0.5)
-		op.ColorM.Scale(0, 0, 0, 1)
-		op.ColorM.Translate(r, g, b, 0)
+		op.ColorScale.Scale(float32(r), float32(g), float32(b), 1)
 		op.GeoM.Translate(365, 555) // Centered: 285 + 80 = 365, bottom adjusted
-		screen.DrawImage(d.cnvPhoton, op)
+		screen.DrawImage(d.imgPhotonMask, op)
 
 		// Draw scroller
 		d.drawScroller(screen)
@@ -870,30 +931,33 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 }
 
 func (d *PhenomenaDemo) drawScroller(screen *ebiten.Image) {
-	d.cnvScroller.Fill(color.RGBA{0x00, 0x01, 0x11, 0xFF})
 	d.scrollVertices = d.scrollVertices[:0]
 	d.scrollIndices = d.scrollIndices[:0]
+	const (
+		scaleX     = float32(1.67)
+		scaleY     = float32(1.875)
+		translateY = float32(195)
+	)
 
 	t2 := d.t
+	waveSin, waveCos := math.Sincos(5*10.50 + d.t/6)
 	for i := 0; i < 240; i++ {
+		charIndex := d.scrollHead + i
+		if charIndex >= len(d.scrollChars) {
+			charIndex -= len(d.scrollChars)
+		}
+		char := d.scrollChars[charIndex]
 		var ypos float64
 		if t2 > 5*50-float64(i)*0.0033 {
-			ypos = 80 * math.Cos(5*10.50+t2/6)
+			ypos = 80 * waveCos
 		} else {
 			ypos = 80
 		}
 
-		charsetIdx := -1
-		for j, c := range charsetPhenomena {
-			if d.scrollChars[i].char == c {
-				charsetIdx = j
-				break
-			}
-		}
-
+		charsetIdx := int(char.glyph)
 		if charsetIdx >= 0 && charsetIdx < len(charsetPhenomena) {
-			frame := d.scrollChars[i].frame
-			slice := d.scrollChars[i].slice
+			frame := int(char.frame)
+			slice := int(char.slice)
 
 			sx := frame*16 + slice*2
 			sy := charsetIdx * 33
@@ -901,26 +965,21 @@ func (d *PhenomenaDemo) drawScroller(screen *ebiten.Image) {
 			if sx >= 0 && sx <= 480-2 && sy >= 0 && sy <= len(charsetPhenomena)*33-33 {
 				d.scrollVertices, d.scrollIndices = appendTexturedQuad(
 					d.scrollVertices, d.scrollIndices,
-					float32(i*2), float32(67+ypos), 2, 33,
+					float32(i*2)*scaleX, translateY+float32(67+ypos)*scaleY, 2*scaleX, 33*scaleY,
 					float32(sx), float32(sy), 2, 33,
 				)
 			}
 		}
 
 		t2 += 1.0 / 6.0
+		waveSin, waveCos =
+			waveSin*phenomenaWaveCosStep+waveCos*phenomenaWaveSinStep,
+			waveCos*phenomenaWaveCosStep-waveSin*phenomenaWaveSinStep
 	}
 	if len(d.scrollIndices) > 0 {
 		op := &ebiten.DrawTrianglesOptions{Filter: ebiten.FilterNearest}
-		d.cnvScroller.DrawTriangles(d.scrollVertices, d.scrollIndices, d.cnvFrames, op)
+		screen.DrawTriangles(d.scrollVertices, d.scrollIndices, d.cnvFrames, op)
 	}
-
-	// Draw scroller to screen scaled and centered
-	// Original: 480x180 scaled 2x1.5 = 960x270 starting at y=156
-	// For 800x600: scale to fit width, center horizontally
-	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Scale(1.67, 1.875) // Scale to fill 800 width: 480*1.67=800, height: 180*1.875=337.5
-	op.GeoM.Translate(0, 195)  // Adjust vertical position for 800x600
-	screen.DrawImage(d.cnvScroller, op)
 }
 
 func hslToRGB(h, s, l float64) (float64, float64, float64) {
@@ -1042,8 +1101,22 @@ type ScrollForm struct {
 
 type PrintPos struct {
 	x, y, z float64
-	letter  string
+	letter  byte
 }
+
+const tcbScrollShaderSource = `//kage:unit pixels
+
+package main
+
+func Fragment(dstPos vec4, srcPos vec2, custom vec4) vec4 {
+	glyph := imageSrc0UnsafeAt(srcPos)
+	rasterY := floor(custom.r) + 0.5
+	// Coordinates passed to imageSrc1* are expressed in image 0's texture
+	// space; Kage converts the origin internally for the second image.
+	raster := imageSrc1UnsafeAt(imageSrc0Origin() + vec2(0.5, rasterY))
+	return vec4(raster.rgb * glyph.a, raster.a * glyph.a)
+}
+`
 
 type TCBDemo struct {
 	initialized bool
@@ -1053,26 +1126,25 @@ type TCBDemo struct {
 	logo      *ebiten.Image
 	font      *ebiten.Image
 
-	mycanvas     *ebiten.Image
-	papercanvas  *ebiten.Image
-	papercanvas2 *ebiten.Image
-	scrollcanvas *ebiten.Image
-	lettercanvas *ebiten.Image
-	thecanvas    *ebiten.Image
-	thecanvas2   *ebiten.Image
+	logoCenter   *ebiten.Image
+	scrollShader *ebiten.Shader
 
-	fontTiles map[rune]*ebiten.Image
+	fontTileRects [128]image.Rectangle
+	stripVertices []ebiten.Vertex
+	stripIndices  []uint16
 
-	bgSpeed []float64
-	bgPos   []float64
+	bgSpeed [32]float64
+	bgPos   [32]float64
 
-	scrollForms []ScrollForm
-	form        int
-	scrollX     float64
-	scrollText  string
-	addi        int
-	sinAdder    float64
-	printPos    []PrintPos
+	scrollForms       [8]ScrollForm
+	form              int
+	scrollX           float64
+	scrollText        string
+	scrollLetters     []byte
+	scrollFormChanges []int8
+	addi              int
+	sinAdder          float64
+	printPos          [30]PrintPos
 
 	logoSin  []float64
 	dcounter int
@@ -1083,22 +1155,15 @@ type TCBDemo struct {
 
 func NewTCBDemo() *TCBDemo {
 	d := &TCBDemo{
-		mycanvas:     ebiten.NewImage(800, 600),
-		papercanvas:  ebiten.NewImage(320, 200),
-		papercanvas2: ebiten.NewImage(640, 400),
-		scrollcanvas: ebiten.NewImage(320, 200),
-		lettercanvas: ebiten.NewImage(32, 32),
+		stripVertices: make([]ebiten.Vertex, 0, 64*4),
+		stripIndices:  make([]uint16, 0, 64*6),
 
-		fontTiles: make(map[rune]*ebiten.Image),
-		printPos:  make([]PrintPos, 30),
-
-		form:    0,
 		addi:    0,
 		rotAdd:  1,
 		scrollX: 0,
 	}
 
-	d.scrollForms = []ScrollForm{
+	d.scrollForms = [8]ScrollForm{
 		{0, 0, 0, 0, 55, 0, 0},
 		{0, 0, 0, 0, 55, 0, 2},
 		{0, 0, 0, 0, 55, 20, 2},
@@ -1108,22 +1173,21 @@ func NewTCBDemo() *TCBDemo {
 		{200, 40, -4, 5, -70, 40, -4},
 		{150, 20, -3, 5, 55, 20, 2},
 	}
-
 	speeds := []float64{8, 7.5, 7, 6.5, 6, 5.5, 5, 4.5, 4, 3.5, 3, 2.5, 2, 1.5, 1, 0.5}
-	d.bgSpeed = make([]float64, 32)
-	d.bgPos = make([]float64, 32)
-
-	copy(d.bgSpeed[:16], speeds)
-	copy(d.bgSpeed[16:], speeds)
+	for i, speed := range speeds {
+		d.bgSpeed[i] = speed
+		d.bgSpeed[i+16] = speed
+	}
 
 	d.initLogoSin()
 	d.initScrollText()
+	d.preprocessScrollText()
 
 	return d
 }
 
 func (d *TCBDemo) initLogoSin() {
-	d.logoSin = make([]float64, 0)
+	d.logoSin = make([]float64, 0, 40+(160*5+4)+(160*5+10)+160)
 
 	for i := 0; i < 40; i++ {
 		d.logoSin = append(d.logoSin, 0)
@@ -1175,6 +1239,25 @@ func (d *TCBDemo) initScrollText() {
 		"                                             "
 }
 
+func (d *TCBDemo) preprocessScrollText() {
+	d.scrollLetters = make([]byte, len(d.scrollText))
+	d.scrollFormChanges = make([]int8, len(d.scrollText))
+	for i := range d.scrollFormChanges {
+		d.scrollFormChanges[i] = -1
+	}
+
+	for i := range d.scrollText {
+		letter := d.scrollText[i]
+		if letter == '^' && i+1 < len(d.scrollText) && d.scrollText[i+1] >= '0' && d.scrollText[i+1] <= '7' {
+			d.scrollFormChanges[i] = int8(d.scrollText[i+1] - '0')
+			letter = d.scrollText[(i-1+len(d.scrollText))%len(d.scrollText)]
+		} else if i >= 2 && d.scrollText[i-1] == '^' && letter >= '0' && letter <= '7' {
+			letter = d.scrollText[i-2]
+		}
+		d.scrollLetters[i] = letter
+	}
+}
+
 func (d *TCBDemo) Init() error {
 	if d.initialized {
 		return nil
@@ -1213,22 +1296,15 @@ func (d *TCBDemo) Init() error {
 		d.font = ebiten.NewImage(320, 198)
 	} else {
 		d.font = ebiten.NewImageFromImage(img)
-		d.cacheFontTiles()
+	}
+	d.cacheFontTiles()
+	d.scrollShader, err = ebiten.NewShader([]byte(tcbScrollShaderSource))
+	if err != nil {
+		return fmt.Errorf("compile TCB scroller shader: %w", err)
 	}
 
 	if d.logo != nil {
-		d.thecanvas = ebiten.NewImage(80, 16)
-		d.thecanvas2 = ebiten.NewImage(80, 16)
-
-		tcbPart := d.logo.SubImage(image.Rect(114, 0, 193, 15)).(*ebiten.Image)
-
-		op := &ebiten.DrawImageOptions{}
-		d.thecanvas.DrawImage(tcbPart, op)
-
-		op2 := &ebiten.DrawImageOptions{}
-		op2.GeoM.Scale(1, -1)
-		op2.GeoM.Translate(0, 16)
-		d.thecanvas2.DrawImage(tcbPart, op2)
+		d.logoCenter = d.logo.SubImage(image.Rect(114, 0, 193, 15)).(*ebiten.Image)
 	}
 
 	d.initialized = true
@@ -1236,7 +1312,7 @@ func (d *TCBDemo) Init() error {
 }
 
 func (d *TCBDemo) cacheFontTiles() {
-	charMap := [][]rune{
+	charMap := [6][10]rune{
 		{0, '!', 0, 0, 0, 0, 0, 0, '(', ')'},
 		{0, 0, ',', 0, '.', 0, 0, 0, 0, 0},
 		{0, 0, 0, 0, 0, 0, ':', ';', 0, 0},
@@ -1251,14 +1327,11 @@ func (d *TCBDemo) cacheFontTiles() {
 			if ch != 0 {
 				x := col * 32
 				y := row * 33
-				d.fontTiles[ch] = d.font.SubImage(
-					image.Rect(x, y, x+32, y+33),
-				).(*ebiten.Image)
+				d.fontTileRects[ch] = image.Rect(x, y, x+32, y+33)
 			}
 		}
 	}
 
-	d.fontTiles[' '] = ebiten.NewImage(32, 33)
 }
 
 func (d *TCBDemo) Update() error {
@@ -1268,8 +1341,11 @@ func (d *TCBDemo) Update() error {
 		}
 	}
 
-	for i := 0; i < 32; i++ {
-		d.bgPos[i] = math.Mod(d.bgPos[i]-d.bgSpeed[i], 256)
+	for i := range d.bgPos {
+		d.bgPos[i] -= d.bgSpeed[i]
+		if d.bgPos[i] <= -256 {
+			d.bgPos[i] += 256
+		}
 	}
 
 	d.dcounter++
@@ -1293,40 +1369,41 @@ func (d *TCBDemo) Update() error {
 
 func (d *TCBDemo) scroll3D(scrollspeed float64) {
 	d.sinAdder += 0.02
+	activeForm := -1
+	previousCharIdx := -2
+	var zSin, zCos, ySin, yCos float64
+	var zStepSin, zStepCos, yStepSin, yStepCos float64
 
 	for i := range d.printPos {
-		d.printPos[i] = PrintPos{}
-	}
-
-	printIdx := 0
-	for i := 0; i < 30; i++ {
 		charIdx := d.addi + i
-		for charIdx >= len(d.scrollText) {
+		if charIdx >= len(d.scrollText) {
 			charIdx -= len(d.scrollText)
 		}
 
-		letter := string(d.scrollText[charIdx])
-
-		if letter == "^" && charIdx+1 < len(d.scrollText) {
-			nextChar := d.scrollText[(charIdx+1)%len(d.scrollText)]
-			if nextChar >= '0' && nextChar <= '7' {
-				d.form = int(nextChar - '0')
-				letter = string(d.scrollText[(charIdx-1+len(d.scrollText))%len(d.scrollText)])
-			}
+		letter := d.scrollLetters[charIdx]
+		if form := d.scrollFormChanges[charIdx]; form >= 0 {
+			d.form = int(form)
 		}
-
-		if charIdx > 0 && d.scrollText[(charIdx-1+len(d.scrollText))%len(d.scrollText)] == '^' {
-			if d.scrollText[charIdx] >= '0' && d.scrollText[charIdx] <= '7' {
-				if charIdx >= 2 {
-					letter = string(d.scrollText[(charIdx-2+len(d.scrollText))%len(d.scrollText)])
-				}
-			}
-		}
-
 		sf := d.scrollForms[d.form]
 
-		letterZ := sf.zSize*math.Sin(sf.zAdd+float64(charIdx)*sf.zAmount*0.01+d.sinAdder*sf.zSpeed) + 150
-		letterY := sf.ySize*math.Cos(1.5+float64(charIdx)*sf.yAmount*0.01+d.sinAdder*sf.ySpeed) - 4
+		if activeForm != d.form || charIdx != previousCharIdx+1 {
+			if sf.zSize != 0 {
+				zSin, zCos = math.Sincos(sf.zAdd + float64(charIdx)*sf.zAmount*0.01 + d.sinAdder*sf.zSpeed)
+				zStepSin, zStepCos = math.Sincos(sf.zAmount * 0.01)
+			}
+			ySin, yCos = math.Sincos(1.5 + float64(charIdx)*sf.yAmount*0.01 + d.sinAdder*sf.ySpeed)
+			yStepSin, yStepCos = math.Sincos(sf.yAmount * 0.01)
+			activeForm = d.form
+		} else {
+			if sf.zSize != 0 {
+				zSin, zCos = stepSinCosForward(zSin, zCos, zStepSin, zStepCos)
+			}
+			ySin, yCos = stepSinCosForward(ySin, yCos, yStepSin, yStepCos)
+		}
+		previousCharIdx = charIdx
+
+		letterZ := sf.zSize*zSin + 150
+		letterY := sf.ySize*yCos - 4
 
 		scale := 250.0 / (250.0 + letterZ)
 
@@ -1334,16 +1411,20 @@ func (d *TCBDemo) scroll3D(scrollspeed float64) {
 		x2d := ((letterX - 16) * scale) + 160.0
 		y2d := ((letterY - 14) * scale) + 100.0
 
-		d.printPos[printIdx].x = x2d
-		d.printPos[printIdx].y = y2d
-		d.printPos[printIdx].z = scale
-		d.printPos[printIdx].letter = letter
-		printIdx++
+		d.printPos[i] = PrintPos{x: x2d, y: y2d, z: scale, letter: letter}
 	}
 
-	sort.Slice(d.printPos, func(i, j int) bool {
-		return d.printPos[i].z < d.printPos[j].z
-	})
+	// The list is tiny and fixed-size. Insertion sort avoids the reflection and
+	// heap escape caused by sort.Slice.
+	for i := 1; i < len(d.printPos); i++ {
+		item := d.printPos[i]
+		j := i
+		for j > 0 && d.printPos[j-1].z > item.z {
+			d.printPos[j] = d.printPos[j-1]
+			j--
+		}
+		d.printPos[j] = item
+	}
 
 	d.scrollX += scrollspeed
 
@@ -1361,114 +1442,129 @@ func (d *TCBDemo) Draw(screen *ebiten.Image) {
 		return
 	}
 
-	d.mycanvas.Fill(color.Black)
-	d.papercanvas.Clear()
-	d.papercanvas2.Clear()
-	d.scrollcanvas.Clear()
+	screen.Fill(color.Black)
+	d.stripVertices = d.stripVertices[:0]
+	d.stripIndices = d.stripIndices[:0]
 
 	for i := 0; i < 16; i++ {
 		xPos := int(d.bgPos[i]) * 2
 		yPos := i * 10
 
-		srcY := i * 10
-		mountainStrip := d.mountains.SubImage(image.Rect(0, srcY, 1024, srcY+10)).(*ebiten.Image)
-
-		op := &ebiten.DrawImageOptions{}
-		op.GeoM.Translate(float64(xPos), float64(yPos))
-		d.papercanvas2.DrawImage(mountainStrip, op)
-
-		op.GeoM.Translate(640, 0)
-		d.papercanvas2.DrawImage(mountainStrip, op)
+		d.stripVertices, d.stripIndices = appendTexturedQuad(
+			d.stripVertices, d.stripIndices,
+			float32(64+xPos), float32(60+yPos), 1024, 10,
+			0, float32(i*10), 1024, 10,
+		)
+		d.stripVertices, d.stripIndices = appendTexturedQuad(
+			d.stripVertices, d.stripIndices,
+			float32(64+xPos+640), float32(60+yPos), 1024, 10,
+			0, float32(i*10), 1024, 10,
+		)
 	}
 
 	for i := 16; i < 32; i++ {
 		xPos := int(d.bgPos[i]) * 2
 		yPos := i*10 + 84
 
-		srcY := i * 10
-		mountainStrip := d.mountains.SubImage(image.Rect(0, srcY, 1024, srcY+10)).(*ebiten.Image)
-
-		op := &ebiten.DrawImageOptions{}
-		op.GeoM.Translate(float64(xPos), float64(yPos))
-		d.papercanvas2.DrawImage(mountainStrip, op)
-
-		op.GeoM.Translate(640, 0)
-		d.papercanvas2.DrawImage(mountainStrip, op)
+		d.stripVertices, d.stripIndices = appendTexturedQuad(
+			d.stripVertices, d.stripIndices,
+			float32(64+xPos), float32(60+yPos), 1024, 10,
+			0, float32(i*10), 1024, 10,
+		)
+		d.stripVertices, d.stripIndices = appendTexturedQuad(
+			d.stripVertices, d.stripIndices,
+			float32(64+xPos+640), float32(60+yPos), 1024, 10,
+			0, float32(i*10), 1024, 10,
+		)
+	}
+	if len(d.stripIndices) > 0 {
+		// The former 640x400 paper canvas clipped the horizontally scrolling
+		// strips to this viewport. Drawing through a destination sub-image keeps
+		// that clipping while avoiding both the render target and its full copy.
+		mountainViewport := screen.SubImage(image.Rect(64, 60, 704, 460)).(*ebiten.Image)
+		mountainViewport.DrawTriangles(d.stripVertices, d.stripIndices, d.mountains, nil)
 	}
 
-	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Translate(64, 60)
-	d.mycanvas.DrawImage(d.papercanvas2, op)
-
+	d.stripVertices = d.stripVertices[:0]
+	d.stripIndices = d.stripIndices[:0]
 	for i := 0; i < 32; i++ {
 		xOffset := d.logoSin[d.dcounter+i]
-
-		src := d.logo.SubImage(image.Rect(0, 16+i, 303, 17+i)).(*ebiten.Image)
-		op := &ebiten.DrawImageOptions{}
-		op.GeoM.Translate(8+xOffset, float64(96+i))
-		d.papercanvas.DrawImage(src, op)
+		d.stripVertices, d.stripIndices = appendTexturedQuad(
+			d.stripVertices, d.stripIndices,
+			float32(64+2*(8+xOffset)), float32(60+2*(96+i)), 606, 2,
+			0, float32(16+i), 303, 1,
+		)
+	}
+	if len(d.stripIndices) > 0 {
+		screen.DrawTriangles(d.stripVertices, d.stripIndices, d.logo, nil)
 	}
 
-	if d.thecanvas != nil && d.thecanvas2 != nil {
-		op = &ebiten.DrawImageOptions{}
+	if d.logoCenter != nil {
+		op := &ebiten.DrawImageOptions{}
+		if d.next != 0 {
+			op.GeoM.Scale(1, -1)
+			op.GeoM.Translate(0, 16)
+		}
 		op.GeoM.Translate(-40, -8)
 		op.GeoM.Scale(1, d.rotPos)
 		op.GeoM.Translate(160, 88)
-
-		if d.next == 0 {
-			d.papercanvas.DrawImage(d.thecanvas, op)
-		} else {
-			d.papercanvas.DrawImage(d.thecanvas2, op)
-		}
+		op.GeoM.Scale(2, 2)
+		op.GeoM.Translate(64, 60)
+		screen.DrawImage(d.logoCenter, op)
 	}
 
-	d.drawScroll3D()
-
-	op = &ebiten.DrawImageOptions{}
-	d.papercanvas.DrawImage(d.scrollcanvas, op)
-
-	op = &ebiten.DrawImageOptions{}
-	op.GeoM.Scale(2, 2)
-	op.GeoM.Translate(64, 60)
-	d.mycanvas.DrawImage(d.papercanvas, op)
-
-	screen.DrawImage(d.mycanvas, nil)
+	d.drawScroll3D(screen)
 }
 
-func (d *TCBDemo) drawScroll3D() {
+func (d *TCBDemo) drawScroll3D(screen *ebiten.Image) {
+	d.stripVertices = d.stripVertices[:0]
+	d.stripIndices = d.stripIndices[:0]
 	for i := 0; i < 30; i++ {
-		if d.printPos[i].letter == "" || d.printPos[i].z <= 0 {
+		if d.printPos[i].letter == 0 || d.printPos[i].z <= 0 {
 			continue
 		}
 
-		ch := rune(d.printPos[i].letter[0])
-		tile, ok := d.fontTiles[ch]
-		if !ok {
+		ch := rune(d.printPos[i].letter)
+		var tileRect image.Rectangle
+		if ch >= 0 && ch < rune(len(d.fontTileRects)) {
+			tileRect = d.fontTileRects[ch]
+		}
+		if tileRect.Empty() {
 			if ch >= 'a' && ch <= 'z' {
 				ch = ch - 'a' + 'A'
-				tile, ok = d.fontTiles[ch]
-			}
-			if !ok {
-				tile = d.fontTiles[' ']
+				if ch < rune(len(d.fontTileRects)) {
+					tileRect = d.fontTileRects[ch]
+				}
 			}
 		}
 
-		if tile != nil {
-			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Translate(-16, -16.5)
-			op.GeoM.Scale(d.printPos[i].z, d.printPos[i].z)
-			op.GeoM.Translate(d.printPos[i].x, d.printPos[i].y)
-
-			op.Filter = ebiten.FilterNearest
-
-			d.scrollcanvas.DrawImage(tile, op)
+		if !tileRect.Empty() {
+			scale := float32(d.printPos[i].z)
+			localY := float32(d.printPos[i].y) - 16.5*scale
+			vertexBase := len(d.stripVertices)
+			d.stripVertices, d.stripIndices = appendTexturedQuad(
+				d.stripVertices, d.stripIndices,
+				64+2*(float32(d.printPos[i].x)-16*scale),
+				60+2*localY,
+				64*scale, 66*scale,
+				float32(tileRect.Min.X), float32(tileRect.Min.Y), 32, 33,
+			)
+			// DrawTrianglesShader exposes vertex colours as arbitrary interpolated
+			// values. Carry the old 320x200 destination Y so the fragment shader
+			// samples the exact raster scanline that SourceAtop used to apply.
+			d.stripVertices[vertexBase].ColorR = localY
+			d.stripVertices[vertexBase+1].ColorR = localY
+			d.stripVertices[vertexBase+2].ColorR = localY + 33*scale
+			d.stripVertices[vertexBase+3].ColorR = localY + 33*scale
 		}
 	}
-
-	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Scale(float64(d.scrollcanvas.Bounds().Dx())/float64(d.rasters.Bounds().Dx()), 1)
-	op.CompositeMode = ebiten.CompositeModeSourceAtop
-	d.scrollcanvas.DrawImage(d.rasters, op)
+	if len(d.stripIndices) > 0 && d.scrollShader != nil {
+		scrollViewport := screen.SubImage(image.Rect(64, 60, 704, 460)).(*ebiten.Image)
+		op := &ebiten.DrawTrianglesShaderOptions{}
+		op.Images[0] = d.font
+		op.Images[1] = d.rasters
+		scrollViewport.DrawTrianglesShader(d.stripVertices, d.stripIndices, d.scrollShader, op)
+	}
 }
 
 // ==================== COCO DEMO (Demo3) ====================
@@ -1495,7 +1591,12 @@ const (
 	scrollScaleInt3        = 3
 	scrollScaleFactor3     = 3.0
 	scrollSurfWidthFactor3 = 2.0
-	scrollSpeedFactor3     = 10.0 * 1.5
+	scrollSpeedFactor3     = 15
+	cocoScrollPadding3     = "     "
+	cocoScrollText3        = cocoScrollPadding3 + cocoScrollPadding3 +
+		"WELCOME TO THE COCO IS THE BEST DEMO! " + cocoScrollPadding3 +
+		"THIS DEMO COMBINES THE BEST EFFECTS FROM VARIOUS ATARI ST DEMOS. " + cocoScrollPadding3 +
+		"GREETINGS TO ALL DEMOSCENE LOVERS! " + cocoScrollPadding3 + cocoScrollPadding3
 )
 
 type Cube3D struct {
@@ -1503,16 +1604,65 @@ type Cube3D struct {
 	angleY float64
 	angleZ float64
 	size   float64
-}
 
-func NewCube3D(size float64) *Cube3D {
-	return &Cube3D{size: size}
+	sinX float64
+	cosX float64
+	sinY float64
+	cosY float64
+	sinZ float64
+	cosZ float64
+
+	stepDX   float64
+	stepDY   float64
+	stepDZ   float64
+	stepSinX float64
+	stepCosX float64
+	stepSinY float64
+	stepCosY float64
+	stepSinZ float64
+	stepCosZ float64
+
+	rotationCount uint16
+	trigReady     bool
+	stepReady     bool
 }
 
 func (c *Cube3D) Rotate(dx, dy, dz float64) {
+	c.ensureTrig()
+	if !c.stepReady || dx != c.stepDX || dy != c.stepDY || dz != c.stepDZ {
+		c.stepDX, c.stepDY, c.stepDZ = dx, dy, dz
+		c.stepSinX, c.stepCosX = math.Sincos(dx)
+		c.stepSinY, c.stepCosY = math.Sincos(dy)
+		c.stepSinZ, c.stepCosZ = math.Sincos(dz)
+		c.stepReady = true
+	}
+
 	c.angleX += dx
 	c.angleY += dy
 	c.angleZ += dz
+	c.sinX, c.cosX = stepSinCosForward(c.sinX, c.cosX, c.stepSinX, c.stepCosX)
+	c.sinY, c.cosY = stepSinCosForward(c.sinY, c.cosY, c.stepSinY, c.stepCosY)
+	c.sinZ, c.cosZ = stepSinCosForward(c.sinZ, c.cosZ, c.stepSinZ, c.stepCosZ)
+
+	c.rotationCount++
+	if c.rotationCount == 1024 {
+		c.angleX = math.Mod(c.angleX, 2*math.Pi)
+		c.angleY = math.Mod(c.angleY, 2*math.Pi)
+		c.angleZ = math.Mod(c.angleZ, 2*math.Pi)
+		c.rotationCount = 0
+		c.trigReady = false
+		c.ensureTrig()
+	}
+}
+
+func (c *Cube3D) ensureTrig() {
+	if c.trigReady {
+		return
+	}
+	c.sinX, c.cosX = math.Sincos(c.angleX)
+	c.sinY, c.cosY = math.Sincos(c.angleY)
+	c.sinZ, c.cosZ = math.Sincos(c.angleZ)
+	c.trigReady = true
 }
 
 type Letter3 struct {
@@ -1524,6 +1674,36 @@ type DMASprite3 struct {
 	x, y float64
 }
 
+type faceDepth3 struct {
+	index int
+	depth float64
+}
+
+var cubeCorners3 = [8][3]float64{
+	{-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
+	{-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1},
+}
+
+var cubeFaces3 = [6][4]int{
+	{0, 1, 2, 3}, {4, 5, 6, 7}, {0, 1, 5, 4},
+	{2, 3, 7, 6}, {0, 3, 7, 4}, {1, 2, 6, 5},
+}
+
+var cubeFaceColors3 = [6]color.RGBA{
+	{255, 140, 0, 255}, {255, 165, 50, 255}, {255, 180, 80, 255},
+	{255, 120, 0, 255}, {255, 150, 30, 255}, {255, 200, 100, 255},
+}
+
+var (
+	cocoCubePathSinStep3, cocoCubePathCosStep3 = math.Sincos(0.04)
+	cocoCubeBobSinStep3, cocoCubeBobCosStep3   = math.Sincos(0.1)
+)
+
+var (
+	cocoDMAPhaseOffsets3 = [4]float64{1.25, 0.54, 0.23, 0.98}
+	cocoDMAPhaseDeltas3  = [4]float64{0.02 * 1.35, 0.02 * 1.86, 0.02 * 1.72, 0.02 * 1.63}
+)
+
 type CocoDemo struct {
 	initialized bool
 
@@ -1533,19 +1713,28 @@ type CocoDemo struct {
 	dmaLogoImg *ebiten.Image
 	fontImg    *ebiten.Image
 
-	titleCanvas *ebiten.Image
-	scrollSurf  *ebiten.Image
-	solidImage  *ebiten.Image
+	scrollSurf *ebiten.Image
+	solidImage *ebiten.Image
 
-	letterData map[rune]*Letter3
+	letterData [128]Letter3
+	fontTiles  [128]*ebiten.Image
 
 	// 3D Cubes
-	cubes     []*Cube3D
-	spritePos []float64
+	cubes         [nbCubes3]Cube3D
+	spritePos     [nbCubes3]float64
+	spritePathSin [nbCubes3]float64
+	spritePathCos [nbCubes3]float64
+	spriteBobSin  [nbCubes3]float64
+	spriteBobCos  [nbCubes3]float64
+	cubeVertices  []ebiten.Vertex
+	cubeIndices   []uint16
 
 	// DMA logo sprites (16 logos in 4x4 grid)
 	dmaSprites [nbDMALogos3]DMASprite3
-	ctrSprite  float64
+	dmaSin     [4]float64
+	dmaCos     [4]float64
+	dmaStepSin [4]float64
+	dmaStepCos [4]float64
 
 	// Scrolling text (megatwist style)
 	frontWavePos   int
@@ -1555,9 +1744,9 @@ type CocoDemo struct {
 	frontMainWave  []int
 	position       []int
 	scrollText     string
-	scrollRunes    []rune
 	scrollVertices []ebiten.Vertex
 	scrollIndices  []uint16
+	lastTextOffset int
 
 	// Rotozoom
 	posXi float64
@@ -1566,44 +1755,47 @@ type CocoDemo struct {
 
 	// Title logo animation
 	logoX float64
-	hold  int
 
 	// Copper bars
-	cnt       int
-	cnt2      int
-	copperSin []int
+	cnt        int
+	cnt2       int
+	copperSin  []int
+	copperBars [10]*ebiten.Image
 
 	// VBL counter
-	vbl       int
 	iteration int
 }
 
 func NewCocoDemo() *CocoDemo {
-	spc := "     "
 	d := &CocoDemo{
-		letterData:     make(map[rune]*Letter3),
-		titleCanvas:    ebiten.NewImage(demoWidth, 72),
 		scrollSurf:     ebiten.NewImage(int(float64(demoWidth)*scrollSurfWidthFactor3), int(float64(fontHeight3)*scrollScaleFactor3)),
 		solidImage:     ebiten.NewImage(3, 3),
-		spritePos:      make([]float64, nbCubes3),
-		scrollVertices: make([]ebiten.Vertex, 0, (demoHeight-72)*8),
-		scrollIndices:  make([]uint16, 0, (demoHeight-72)*12),
+		cubeVertices:   make([]ebiten.Vertex, 0, nbCubes3*len(cubeFaces3)*20),
+		cubeIndices:    make([]uint16, 0, nbCubes3*len(cubeFaces3)*30),
+		scrollVertices: make([]ebiten.Vertex, 0, ((demoHeight-72)/scrollScaleInt3)*8),
+		scrollIndices:  make([]uint16, 0, ((demoHeight-72)/scrollScaleInt3)*12),
 		logoX:          0.5,
-		hold:           0,
-		scrollText:     spc + spc + "WELCOME TO THE COCO IS THE BEST DEMO! " + spc + "THIS DEMO COMBINES THE BEST EFFECTS FROM VARIOUS ATARI ST DEMOS. " + spc + "GREETINGS TO ALL DEMOSCENE LOVERS! " + spc + spc,
+		lastTextOffset: -1,
+		scrollText:     cocoScrollText3,
 	}
 	d.solidImage.Fill(color.White)
 
-	d.scrollRunes = []rune(d.scrollText)
-
 	// Init 3D cubes
-	d.cubes = make([]*Cube3D, nbCubes3)
 	for i := 0; i < nbCubes3; i++ {
-		d.cubes[i] = NewCube3D(40.0)
+		d.cubes[i] = Cube3D{
+			angleX: float64(i) * 0.3,
+			angleY: float64(i) * 0.2,
+			angleZ: float64(i) * 0.1,
+			size:   40,
+		}
+		d.cubes[i].ensureTrig()
 		d.spritePos[i] = float64(0.15) * float64(i+1)
-		d.cubes[i].angleX = float64(i) * 0.3
-		d.cubes[i].angleY = float64(i) * 0.2
-		d.cubes[i].angleZ = float64(i) * 0.1
+		d.spritePathSin[i], d.spritePathCos[i] = math.Sincos(d.spritePos[i])
+		d.spriteBobSin[i], d.spriteBobCos[i] = math.Sincos(d.spritePos[i] * 2.5)
+	}
+	for i := range d.dmaSin {
+		d.dmaSin[i], d.dmaCos[i] = math.Sincos(cocoDMAPhaseOffsets3[i])
+		d.dmaStepSin[i], d.dmaStepCos[i] = math.Sincos(cocoDMAPhaseDeltas3[i])
 	}
 
 	// Init wave curves
@@ -1636,6 +1828,10 @@ func (d *CocoDemo) Init() error {
 		log.Printf("Error loading bars: %v", err)
 	} else {
 		d.barsImg = ebiten.NewImageFromImage(img)
+		for i := range d.copperBars {
+			y := i * 2
+			d.copperBars[i] = d.barsImg.SubImage(image.Rect(0, y, d.barsImg.Bounds().Dx(), y+2)).(*ebiten.Image)
+		}
 	}
 
 	img, _, err = image.Decode(bytes.NewReader(demo3CocoData))
@@ -1657,17 +1853,17 @@ func (d *CocoDemo) Init() error {
 		log.Printf("Error loading font: %v", err)
 	} else {
 		d.fontImg = ebiten.NewImageFromImage(img)
-		d.initFontData3()
-		d.precalcPosition()
 	}
+	d.initFontData3()
+	d.precalcPosition()
 
 	d.initialized = true
 	return nil
 }
 
 func (d *CocoDemo) initFontData3() {
-	data := []struct {
-		char  rune
+	data := [...]struct {
+		char  byte
 		x, y  int
 		width int
 	}{
@@ -1692,7 +1888,12 @@ func (d *CocoDemo) initFontData3() {
 	}
 
 	for _, dd := range data {
-		d.letterData[dd.char] = &Letter3{x: dd.x, y: dd.y, width: dd.width}
+		d.letterData[dd.char] = Letter3{x: dd.x, y: dd.y, width: dd.width}
+		if d.fontImg != nil {
+			d.fontTiles[dd.char] = d.fontImg.SubImage(
+				image.Rect(dd.x, dd.y, dd.x+dd.width, dd.y+fontHeight3),
+			).(*ebiten.Image)
+		}
 	}
 }
 
@@ -1712,6 +1913,19 @@ func (d *CocoDemo) Update() error {
 	// Update 3D cubes
 	for i := 0; i < nbCubes3; i++ {
 		d.spritePos[i] += 0.04
+		if d.iteration&1023 == 0 {
+			// 4π is a common period of sin(p) and cos(2.5p).
+			d.spritePos[i] = math.Mod(d.spritePos[i], 4*math.Pi)
+			d.spritePathSin[i], d.spritePathCos[i] = math.Sincos(d.spritePos[i])
+			d.spriteBobSin[i], d.spriteBobCos[i] = math.Sincos(d.spritePos[i] * 2.5)
+		} else {
+			d.spritePathSin[i], d.spritePathCos[i] = stepSinCosForward(
+				d.spritePathSin[i], d.spritePathCos[i], cocoCubePathSinStep3, cocoCubePathCosStep3,
+			)
+			d.spriteBobSin[i], d.spriteBobCos[i] = stepSinCosForward(
+				d.spriteBobSin[i], d.spriteBobCos[i], cocoCubeBobSinStep3, cocoCubeBobCosStep3,
+			)
+		}
 		d.cubes[i].Rotate(
 			0.02*(1+float64(i)*0.1),
 			0.03*(1+float64(i)*0.15),
@@ -1720,9 +1934,18 @@ func (d *CocoDemo) Update() error {
 	}
 
 	// Update DMA logo sprites - synchronized movement
-	d.ctrSprite += 0.02
-	baseX := 100*math.Sin(d.ctrSprite*1.35+1.25) + 100*math.Sin(d.ctrSprite*1.86+0.54)
-	baseY := 60*math.Cos(d.ctrSprite*1.72+0.23) + 60*math.Cos(d.ctrSprite*1.63+0.98)
+	for i := range d.dmaSin {
+		if d.iteration&1023 == 0 {
+			phase := cocoDMAPhaseOffsets3[i] + float64(d.iteration)*cocoDMAPhaseDeltas3[i]
+			d.dmaSin[i], d.dmaCos[i] = math.Sincos(math.Mod(phase, 2*math.Pi))
+		} else {
+			d.dmaSin[i], d.dmaCos[i] = stepSinCosForward(
+				d.dmaSin[i], d.dmaCos[i], d.dmaStepSin[i], d.dmaStepCos[i],
+			)
+		}
+	}
+	baseX := 100*d.dmaSin[0] + 100*d.dmaSin[1]
+	baseY := 60*d.dmaCos[2] + 60*d.dmaCos[3]
 
 	for i := 0; i < nbDMALogos3; i++ {
 		row := i / 4
@@ -1741,14 +1964,7 @@ func (d *CocoDemo) Update() error {
 	d.posRi += 0.005
 
 	// Update title logo
-	if d.hold >= 1 {
-		d.hold--
-	}
-	if d.hold <= 0 {
-		d.logoX += 0.0125
-	}
-
-	d.vbl++
+	d.logoX += 0.0125
 	return nil
 }
 
@@ -1779,8 +1995,9 @@ func (d *CocoDemo) drawRotozoom3(dst *ebiten.Image) {
 	zoom := 0.5 + math.Abs(math.Sin(d.posZi)*2.5)
 	rot := 360.0 / 4.0 * math.Cos(d.posRi*4-math.Cos(d.posRi-0.01)) * 0.3 * math.Pi / 180
 
-	oscX := (float64(demoWidth) / 4) * math.Cos(d.posXi*4-math.Cos(d.posXi-0.1))
-	oscY := (float64(demoHeight) / 2.7) * -math.Sin(d.posXi*2.3-math.Cos(d.posXi-0.1))
+	posXCurve := math.Cos(d.posXi - 0.1)
+	oscX := (float64(demoWidth) / 4) * math.Cos(d.posXi*4-posXCurve)
+	oscY := (float64(demoHeight) / 2.7) * -math.Sin(d.posXi*2.3-posXCurve)
 
 	centerX := float64(demoWidth)/2 + oscX
 	centerY := float64(demoHeight)/2 + oscY
@@ -1808,71 +2025,38 @@ func (d *CocoDemo) drawDMALogos3(dst *ebiten.Image) {
 }
 
 func (d *CocoDemo) drawScrollText3(dst *ebiten.Image) {
-	d.frontWavePos = int(float64(d.iteration) * scrollSpeedFactor3)
+	d.frontWavePos = d.iteration * scrollSpeedFactor3
 
-	decalX := 999999999
-	for ligne := 0; ligne < 36; ligne++ {
-		wave := d.getWave3(d.frontWavePos + ligne)
-		if wave < decalX {
-			decalX = wave
-		}
-	}
+	decalX := d.scrollOffset3(d.frontWavePos)
 
-	if decalX < 0 {
-		decalX = 0
-	}
-
-	i := 0
-	dir := 0
-	if decalX > d.letterDecal {
-		dir = 1
-	} else if decalX < d.letterDecal {
-		dir = -1
-	}
-
-	for decalX < d.getPosition3(d.letterNum+i) || d.getPosition3(d.letterNum+i+1) <= decalX {
-		i += dir
-		if d.letterNum+i < 0 || d.letterNum+i >= len(d.position) {
-			break
-		}
-	}
-	d.letterNum += i
-	if d.letterNum < 0 {
-		d.letterNum = 0
-	}
-	if len(d.position) > 0 && d.letterNum >= len(d.position) {
-		d.letterNum = len(d.position) - 1
-	}
-	if d.letterNum < 0 {
-		d.letterNum = 0
-	}
-	d.letterDecal = d.getPosition3(d.letterNum)
+	// letterNum is deliberately unbounded. getPosition3 and getLetter3 repeat
+	// their source tables together so the whole message keeps looping instead
+	// of becoming clamped to its last character.
+	d.advanceScrollLetter3(decalX)
 
 	// Safety check before calling displayText3
-	if d.letterNum >= 0 && len(d.scrollRunes) > 0 {
+	if d.letterNum >= 0 && len(d.scrollText) > 0 {
 		d.displayText3(d.letterNum)
 	}
 
-	bounce := int(math.Floor(18.0 * math.Abs(math.Sin(float64(d.iteration)*0.1))))
+	bounce := int(18.0 * math.Abs(math.Sin(float64(d.iteration)*0.1)))
 
 	scrollWidth := d.scrollSurf.Bounds().Dx()
-	scaledFontHeight := fontHeight3 * scrollScaleInt3
 
 	baseY := 72
 	totalLines := demoHeight - 72
 	d.scrollVertices = d.scrollVertices[:0]
 	d.scrollIndices = d.scrollIndices[:0]
-	for ligne := 0; ligne < totalLines; ligne++ {
-		sourceFontLine := ligne / scrollScaleInt3
+	// Each source-font line is enlarged to exactly three destination lines.
+	// Emit one three-pixel strip instead of three equivalent one-pixel strips:
+	// this preserves nearest-neighbour sampling while cutting the scrolling
+	// mesh and its command-buffer upload to one third of their former size.
+	for sourceFontLine := 0; sourceFontLine < totalLines/scrollScaleInt3; sourceFontLine++ {
+		ligne := sourceFontLine * scrollScaleInt3
 		frontWave := d.getWave3(d.frontWavePos + sourceFontLine)
 		scrollXRaw := frontWave - d.letterDecal
 
 		scaledLine := ((sourceFontLine + bounce) % fontHeight3) * scrollScaleInt3
-		scaledLine += ligne % scrollScaleInt3
-
-		if scaledLine >= scaledFontHeight {
-			scaledLine = scaledLine % scaledFontHeight
-		}
 
 		if scrollXRaw < 0 {
 			visibleWidth := demoWidth + scrollXRaw
@@ -1880,8 +2064,8 @@ func (d *CocoDemo) drawScrollText3(dst *ebiten.Image) {
 				width := minInt3(visibleWidth, scrollWidth)
 				d.scrollVertices, d.scrollIndices = appendTexturedQuad(
 					d.scrollVertices, d.scrollIndices,
-					float32(-scrollXRaw), float32(baseY+ligne), float32(width), 1,
-					0, float32(scaledLine), float32(width), 1,
+					float32(-scrollXRaw), float32(baseY+ligne), float32(width), scrollScaleInt3,
+					0, float32(scaledLine), float32(width), scrollScaleInt3,
 				)
 			}
 			continue
@@ -1893,8 +2077,8 @@ func (d *CocoDemo) drawScrollText3(dst *ebiten.Image) {
 			if width1 > 0 && width1 <= demoWidth {
 				d.scrollVertices, d.scrollIndices = appendTexturedQuad(
 					d.scrollVertices, d.scrollIndices,
-					0, float32(baseY+ligne), float32(width1), 1,
-					float32(scrollX), float32(scaledLine), float32(width1), 1,
+					0, float32(baseY+ligne), float32(width1), scrollScaleInt3,
+					float32(scrollX), float32(scaledLine), float32(width1), scrollScaleInt3,
 				)
 			}
 
@@ -1902,15 +2086,15 @@ func (d *CocoDemo) drawScrollText3(dst *ebiten.Image) {
 			if width2 > 0 && width2 <= demoWidth {
 				d.scrollVertices, d.scrollIndices = appendTexturedQuad(
 					d.scrollVertices, d.scrollIndices,
-					float32(width1), float32(baseY+ligne), float32(width2), 1,
-					0, float32(scaledLine), float32(width2), 1,
+					float32(width1), float32(baseY+ligne), float32(width2), scrollScaleInt3,
+					0, float32(scaledLine), float32(width2), scrollScaleInt3,
 				)
 			}
 		} else if scrollX+demoWidth <= scrollWidth {
 			d.scrollVertices, d.scrollIndices = appendTexturedQuad(
 				d.scrollVertices, d.scrollIndices,
-				0, float32(baseY+ligne), demoWidth, 1,
-				float32(scrollX), float32(scaledLine), demoWidth, 1,
+				0, float32(baseY+ligne), demoWidth, scrollScaleInt3,
+				float32(scrollX), float32(scaledLine), demoWidth, scrollScaleInt3,
 			)
 		}
 	}
@@ -1928,128 +2112,113 @@ func minInt3(a, b int) int {
 }
 
 func (d *CocoDemo) displayText3(letterOffset int) {
+	if d.fontImg == nil || letterOffset == d.lastTextOffset {
+		return
+	}
+	d.lastTextOffset = letterOffset
 	d.scrollSurf.Clear()
 
 	xPos := 0
 	i := 0
-	maxWidth := d.scrollSurf.Bounds().Dx() + int(200*scrollScaleFactor3)
+	maxWidth := d.scrollSurf.Bounds().Dx()
 
 	for xPos < maxWidth {
 		char := d.getLetter3(i + letterOffset)
-		if letter, ok := d.letterData[char]; ok {
-			srcRect := image.Rect(letter.x, letter.y, letter.x+letter.width, letter.y+fontHeight3)
+		if letter := d.letterData[char]; letter.width > 0 {
 			op := &ebiten.DrawImageOptions{}
 			op.GeoM.Scale(scrollScaleFactor3, scrollScaleFactor3)
 			op.GeoM.Translate(float64(xPos), 0)
-			d.scrollSurf.DrawImage(d.fontImg.SubImage(srcRect).(*ebiten.Image), op)
+			d.scrollSurf.DrawImage(d.fontTiles[char], op)
 			xPos += int(float64(letter.width) * scrollScaleFactor3)
+		} else {
+			xPos += 32 * scrollScaleInt3
 		}
 		i++
 	}
 }
 
 func (d *CocoDemo) draw3DCubes3(dst *ebiten.Image) {
+	d.cubeVertices = d.cubeVertices[:0]
+	d.cubeIndices = d.cubeIndices[:0]
 	for i := 0; i < nbCubes3; i++ {
-		xPos := float64((demoWidth-40)/2) + (float64((demoWidth-40)/2) * math.Sin(d.spritePos[i]))
-		yPos := float64(demoHeight)/2 + (84 * math.Cos(d.spritePos[i]*2.5))
-		d.cubes[i].Draw3(dst, xPos, yPos, d.solidImage)
+		xPos := float64((demoWidth-40)/2) + float64((demoWidth-40)/2)*d.spritePathSin[i]
+		yPos := float64(demoHeight)/2 + 84*d.spriteBobCos[i]
+		d.cubeVertices, d.cubeIndices = d.cubes[i].appendGeometry(d.cubeVertices, d.cubeIndices, xPos, yPos)
+	}
+	if len(d.cubeIndices) > 0 {
+		dst.DrawTriangles(d.cubeVertices, d.cubeIndices, d.solidImage, nil)
 	}
 }
 
-func (c *Cube3D) Draw3(screen *ebiten.Image, centerX, centerY float64, solidImage *ebiten.Image) {
-	vertices := [][3]float64{
-		{-c.size / 2, -c.size / 2, -c.size / 2},
-		{c.size / 2, -c.size / 2, -c.size / 2},
-		{c.size / 2, c.size / 2, -c.size / 2},
-		{-c.size / 2, c.size / 2, -c.size / 2},
-		{-c.size / 2, -c.size / 2, c.size / 2},
-		{c.size / 2, -c.size / 2, c.size / 2},
-		{c.size / 2, c.size / 2, c.size / 2},
-		{-c.size / 2, c.size / 2, c.size / 2},
-	}
+func (c *Cube3D) appendGeometry(vertices []ebiten.Vertex, indices []uint16, centerX, centerY float64) ([]ebiten.Vertex, []uint16) {
+	c.ensureTrig()
+	sinX, cosX := c.sinX, c.cosX
+	sinY, cosY := c.sinY, c.cosY
+	sinZ, cosZ := c.sinZ, c.cosZ
+	half := c.size / 2
 
-	faces := [][4]int{
-		{0, 1, 2, 3}, {4, 5, 6, 7}, {0, 1, 5, 4},
-		{2, 3, 7, 6}, {0, 3, 7, 4}, {1, 2, 6, 5},
-	}
+	var rotated [8][3]float64
+	var projected [8][2]float32
+	for i, corner := range cubeCorners3 {
+		x, y, z := corner[0]*half, corner[1]*half, corner[2]*half
 
-	faceColors := []color.Color{
-		color.RGBA{255, 140, 0, 255}, color.RGBA{255, 165, 50, 255},
-		color.RGBA{255, 180, 80, 255}, color.RGBA{255, 120, 0, 255},
-		color.RGBA{255, 150, 30, 255}, color.RGBA{255, 200, 100, 255},
-	}
-
-	rotated := make([][3]float64, len(vertices))
-	for i, v := range vertices {
-		x, y, z := v[0], v[1], v[2]
-
-		cosX, sinX := math.Cos(c.angleX), math.Sin(c.angleX)
 		y1 := y*cosX - z*sinX
 		z1 := y*sinX + z*cosX
 		y, z = y1, z1
 
-		cosY, sinY := math.Cos(c.angleY), math.Sin(c.angleY)
 		x1 := x*cosY + z*sinY
 		z2 := -x*sinY + z*cosY
 		x, z = x1, z2
 
-		cosZ, sinZ := math.Cos(c.angleZ), math.Sin(c.angleZ)
 		x2 := x*cosZ - y*sinZ
 		y2 := x*sinZ + y*cosZ
 		x, y = x2, y2
 
 		rotated[i] = [3]float64{x, y, z}
+		x2d, y2d := project3D3(x, y, z)
+		projected[i] = [2]float32{float32(centerX + x2d), float32(centerY + y2d)}
 	}
 
-	type faceDepth struct {
-		index int
-		depth float64
-	}
-	depths := make([]faceDepth, len(faces))
-
-	for i, face := range faces {
+	var depths [6]faceDepth3
+	for i, face := range cubeFaces3 {
 		centerZ := 0.0
 		for _, vi := range face {
 			centerZ += rotated[vi][2]
 		}
-		depths[i] = faceDepth{i, centerZ / 4}
+		depths[i] = faceDepth3{i, centerZ / 4}
 	}
 
-	for i := 0; i < len(depths)-1; i++ {
-		for j := i + 1; j < len(depths); j++ {
-			if depths[i].depth > depths[j].depth {
-				depths[i], depths[j] = depths[j], depths[i]
-			}
+	for i := 1; i < len(depths); i++ {
+		item := depths[i]
+		j := i
+		for j > 0 && depths[j-1].depth > item.depth {
+			depths[j] = depths[j-1]
+			j--
 		}
+		depths[j] = item
 	}
 
 	for _, fd := range depths {
-		face := faces[fd.index]
-		faceColor := faceColors[fd.index]
-
-		points := make([]float64, 0, 8)
-		for _, vi := range face {
-			v := rotated[vi]
-			x2d, y2d := project3D3(v[0], v[1], v[2])
-			points = append(points, centerX+x2d, centerY+y2d)
+		face := cubeFaces3[fd.index]
+		faceColor := cubeFaceColors3[fd.index]
+		points := [4][2]float32{
+			projected[face[0]], projected[face[1]], projected[face[2]], projected[face[3]],
 		}
 
-		drawPolygon3(screen, points, faceColor, solidImage)
+		vertices, indices = appendSolidQuad3(vertices, indices, points, faceColor)
 
 		edgeColor := color.RGBA{
-			uint8(faceColor.(color.RGBA).R * 3 / 4),
-			uint8(faceColor.(color.RGBA).G * 3 / 4),
-			uint8(faceColor.(color.RGBA).B * 3 / 4),
+			uint8(faceColor.R * 3 / 4),
+			uint8(faceColor.G * 3 / 4),
+			uint8(faceColor.B * 3 / 4),
 			255,
 		}
 		for i := 0; i < 4; i++ {
 			j := (i + 1) % 4
-			vector.StrokeLine(screen,
-				float32(points[i*2]), float32(points[i*2+1]),
-				float32(points[j*2]), float32(points[j*2+1]),
-				1, edgeColor, false)
+			vertices, indices = appendSolidLine3(vertices, indices, points[i], points[j], 1, edgeColor)
 		}
 	}
+	return vertices, indices
 }
 
 func project3D3(x, y, z float64) (float64, float64) {
@@ -2058,39 +2227,40 @@ func project3D3(x, y, z float64) (float64, float64) {
 	return x * factor, y * factor
 }
 
-func drawPolygon3(screen *ebiten.Image, points []float64, fillColor color.Color, solidImage *ebiten.Image) {
-	if len(points) < 6 {
-		return
-	}
-
-	if len(points) >= 8 {
-		drawTriangle3(screen,
-			float32(points[0]), float32(points[1]),
-			float32(points[2]), float32(points[3]),
-			float32(points[4]), float32(points[5]),
-			fillColor, solidImage)
-
-		drawTriangle3(screen,
-			float32(points[0]), float32(points[1]),
-			float32(points[4]), float32(points[5]),
-			float32(points[6]), float32(points[7]),
-			fillColor, solidImage)
+func solidVertex3(point [2]float32, clr color.RGBA) ebiten.Vertex {
+	const inv255 = 1.0 / 255.0
+	return ebiten.Vertex{
+		DstX: point[0], DstY: point[1], SrcX: 1, SrcY: 1,
+		ColorR: float32(clr.R) * inv255, ColorG: float32(clr.G) * inv255,
+		ColorB: float32(clr.B) * inv255, ColorA: float32(clr.A) * inv255,
 	}
 }
 
-func drawTriangle3(screen *ebiten.Image, x1, y1, x2, y2, x3, y3 float32, clr color.Color, solidImage *ebiten.Image) {
-	r, g, b, a := clr.RGBA()
-	colorR := float32(r) / 0xffff
-	colorG := float32(g) / 0xffff
-	colorB := float32(b) / 0xffff
-	colorA := float32(a) / 0xffff
-	vertices := [3]ebiten.Vertex{
-		{DstX: x1, DstY: y1, SrcX: 1, SrcY: 1, ColorR: colorR, ColorG: colorG, ColorB: colorB, ColorA: colorA},
-		{DstX: x2, DstY: y2, SrcX: 1, SrcY: 1, ColorR: colorR, ColorG: colorG, ColorB: colorB, ColorA: colorA},
-		{DstX: x3, DstY: y3, SrcX: 1, SrcY: 1, ColorR: colorR, ColorG: colorG, ColorB: colorB, ColorA: colorA},
+func appendSolidQuad3(vertices []ebiten.Vertex, indices []uint16, points [4][2]float32, clr color.RGBA) ([]ebiten.Vertex, []uint16) {
+	base := uint16(len(vertices))
+	for _, point := range points {
+		vertices = append(vertices, solidVertex3(point, clr))
 	}
-	indices := [3]uint16{0, 1, 2}
-	screen.DrawTriangles(vertices[:], indices[:], solidImage, nil)
+	indices = append(indices, base, base+1, base+2, base, base+2, base+3)
+	return vertices, indices
+}
+
+func appendSolidLine3(vertices []ebiten.Vertex, indices []uint16, start, end [2]float32, width float32, clr color.RGBA) ([]ebiten.Vertex, []uint16) {
+	dx := end[0] - start[0]
+	dy := end[1] - start[1]
+	length := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+	if length == 0 {
+		return vertices, indices
+	}
+	halfWidth := width / (2 * length)
+	ox, oy := -dy*halfWidth, dx*halfWidth
+	points := [4][2]float32{
+		{start[0] + ox, start[1] + oy},
+		{end[0] + ox, end[1] + oy},
+		{end[0] - ox, end[1] - oy},
+		{start[0] - ox, start[1] - oy},
+	}
+	return appendSolidQuad3(vertices, indices, points, clr)
 }
 
 func (d *CocoDemo) drawTitleWithCopperbars3(dst *ebiten.Image) {
@@ -2098,8 +2268,8 @@ func (d *CocoDemo) drawTitleWithCopperbars3(dst *ebiten.Image) {
 		return
 	}
 
-	d.titleCanvas.Fill(color.Black)
-	d.drawCopperBars3(d.titleCanvas)
+	vector.DrawFilledRect(dst, 0, 0, demoWidth, 72, color.Black, false)
+	d.drawCopperBars3(dst)
 
 	titleX := 64 + float64(demoWidth)*math.Cos(d.logoX)
 	titleH := float64(d.titleImg.Bounds().Dy())
@@ -2108,9 +2278,7 @@ func (d *CocoDemo) drawTitleWithCopperbars3(dst *ebiten.Image) {
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Scale(1.0, scaleY)
 	op.GeoM.Translate(titleX, 0)
-	d.titleCanvas.DrawImage(d.titleImg, op)
-
-	dst.DrawImage(d.titleCanvas, nil)
+	dst.DrawImage(d.titleImg, op)
 }
 
 func (d *CocoDemo) drawCopperBars3(dst *ebiten.Image) {
@@ -2118,8 +2286,7 @@ func (d *CocoDemo) drawCopperBars3(dst *ebiten.Image) {
 		return
 	}
 
-	barsWidth, barsHeight := d.barsImg.Size()
-	if barsHeight < 20 {
+	if d.copperBars[0] == nil {
 		return
 	}
 
@@ -2137,15 +2304,10 @@ func (d *CocoDemo) drawCopperBars3(dst *ebiten.Image) {
 
 		if height > 0 && yPos < 72 {
 			op := &ebiten.DrawImageOptions{}
-			srcRect := image.Rect(0, cc, barsWidth, cc+2)
-			if srcRect.Max.Y > barsHeight {
-				srcRect.Max.Y = barsHeight
-			}
-
 			scaleY := float64(height) / 2.0
 			op.GeoM.Scale(1, scaleY)
 			op.GeoM.Translate(float64(xPos), float64(yPos))
-			dst.DrawImage(d.barsImg.SubImage(srcRect).(*ebiten.Image), op)
+			dst.DrawImage(d.copperBars[cc/2], op)
 		}
 
 		cc += 2
@@ -2239,10 +2401,10 @@ func (d *CocoDemo) createCurves() {
 
 func (d *CocoDemo) precalcPosition() {
 	count := 0
-	d.position = []int{}
+	d.position = make([]int, 0, len(d.scrollText))
 
-	for _, r := range d.scrollRunes {
-		if letter, ok := d.letterData[r]; ok {
+	for i := 0; i < len(d.scrollText); i++ {
+		if letter := d.letterData[d.scrollText[i]]; letter.width > 0 {
 			count += int(float64(letter.width) * scrollScaleFactor3)
 			d.position = append(d.position, count)
 		}
@@ -2283,17 +2445,45 @@ func (d *CocoDemo) getWave3(i int) int {
 }
 
 func (d *CocoDemo) getPosition3(i int) int {
-	if i > 0 && i <= len(d.position) {
+	if i > 0 {
 		return d.getSum3(d.position, i-1, 0)
 	}
 	return 0
 }
 
-func (d *CocoDemo) getLetter3(pos int) rune {
-	if len(d.scrollRunes) == 0 {
+func (d *CocoDemo) advanceScrollLetter3(decalX int) {
+	if len(d.position) == 0 {
+		d.letterNum = 0
+		d.letterDecal = 0
+		return
+	}
+	for d.letterNum > 0 && decalX < d.getPosition3(d.letterNum) {
+		d.letterNum--
+	}
+	for d.getPosition3(d.letterNum+1) <= decalX {
+		d.letterNum++
+	}
+	d.letterDecal = d.getPosition3(d.letterNum)
+}
+
+func (d *CocoDemo) scrollOffset3(frontWavePos int) int {
+	decalX := d.getWave3(frontWavePos)
+	for line := 1; line < fontHeight3; line++ {
+		if wave := d.getWave3(frontWavePos + line); wave < decalX {
+			decalX = wave
+		}
+	}
+	if decalX < 0 {
+		return 0
+	}
+	return decalX
+}
+
+func (d *CocoDemo) getLetter3(pos int) byte {
+	if len(d.scrollText) == 0 {
 		return ' '
 	}
-	return d.scrollRunes[pos%len(d.scrollRunes)]
+	return d.scrollText[pos%len(d.scrollText)]
 }
 
 // ==================== VIVA TCB DEMO (Demo4) ====================
@@ -2318,6 +2508,16 @@ const (
 	fontCharHeight4 = 40
 )
 
+var (
+	vivaZSinStep, vivaZCosStep           = math.Sincos(0.75)
+	vivaXSinStep, vivaXCosStep           = math.Sincos(18)
+	vivaYSinStep, vivaYCosStep           = math.Sincos(0.7)
+	vivaLogoXSinStep, vivaLogoXCosStep   = math.Sincos(0.2)
+	vivaLogoX2SinStep, vivaLogoX2CosStep = math.Sincos(1.0 / 60.0)
+	vivaLogoYSinStep, vivaLogoYCosStep   = math.Sincos(5.0 / 37.0)
+	vivaLogoY2SinStep, vivaLogoY2CosStep = math.Sincos(5.0 / 17.0)
+)
+
 type VivaDemo struct {
 	initialized bool
 
@@ -2326,13 +2526,9 @@ type VivaDemo struct {
 	rasterImg *ebiten.Image
 	tileImg   *ebiten.Image
 	fontImg   *ebiten.Image
-
-	spriteCanvas     *ebiten.Image
-	titleCanvas      *ebiten.Image
-	titleCanvasSmall *ebiten.Image
+	fontTiles [59]*ebiten.Image
 
 	logoX    float64
-	hold     int
 	rasterY1 float64
 	rasterY2 float64
 
@@ -2341,13 +2537,9 @@ type VivaDemo struct {
 	scrollX3 float64
 	scrollX4 float64
 
-	fxFlag int
-	posXi  float64
-	posZi  float64
-	posRi  float64
-
-	initX float64
-	initR float64
+	posXi float64
+	posZi float64
+	posRi float64
 
 	text1 []rune
 	text2 []rune
@@ -2355,19 +2547,13 @@ type VivaDemo struct {
 	text4 []rune
 
 	loopCounter int
-	startTime   time.Time
 }
 
 func NewVivaDemo() *VivaDemo {
 	d := &VivaDemo{
-		logoX:     1.5,
-		hold:      0,
-		rasterY1:  0,
-		rasterY2:  72,
-		initX:     0,
-		initR:     0,
-		fxFlag:    0,
-		startTime: time.Now(),
+		logoX:    1.5,
+		rasterY1: 0,
+		rasterY2: 72,
 	}
 
 	pad := "       "
@@ -2419,16 +2605,19 @@ func (d *VivaDemo) Init() error {
 		log.Printf("Error loading font: %v", err)
 	} else {
 		d.fontImg = ebiten.NewImageFromImage(img)
+		for fontIndex := range d.fontTiles {
+			const cols = 10
+			srcX := (fontIndex % cols) * fontCharWidth4
+			srcY := (fontIndex / cols) * fontCharHeight4
+			if srcX+fontCharWidth4 <= d.fontImg.Bounds().Dx() && srcY+fontCharHeight4 <= d.fontImg.Bounds().Dy() {
+				d.fontTiles[fontIndex] = d.fontImg.SubImage(
+					image.Rect(srcX, srcY, srcX+fontCharWidth4, srcY+fontCharHeight4),
+				).(*ebiten.Image)
+			}
+		}
 	}
 
-	// Create canvases (scaled for 800x600)
-	d.spriteCanvas = ebiten.NewImage(400, 300)
-	d.titleCanvas = ebiten.NewImage(800, 72)
-	d.titleCanvasSmall = ebiten.NewImage(528, 36)
-
-	d.fxFlag = 3 // Start in full demo mode
 	d.initialized = true
-	d.startTime = time.Now()
 	return nil
 }
 
@@ -2451,35 +2640,45 @@ func mapCharToFont4(charCode int) int {
 	}
 }
 
-func (d *VivaDemo) drawScroller(dst *ebiten.Image, text []rune, scrollX float64, scrollerID int, baseY float64) {
+func stepSinCosBackward(sinValue, cosValue, sinStep, cosStep float64) (float64, float64) {
+	return sinValue*cosStep - cosValue*sinStep, cosValue*cosStep + sinValue*sinStep
+}
+
+func stepSinCosForward(sinValue, cosValue, sinStep, cosStep float64) (float64, float64) {
+	return sinValue*cosStep + cosValue*sinStep, cosValue*cosStep - sinValue*sinStep
+}
+
+func (d *VivaDemo) drawScroller(dst *ebiten.Image, text []rune, scrollX float64, scrollerID int, baseY, t, horizontalWave, verticalWave float64) {
 	if d.fontImg == nil {
 		return
-	}
-
-	if d.startTime.IsZero() {
-		d.startTime = time.Now()
 	}
 
 	if len(text) == 0 {
 		return
 	}
 
-	t := time.Since(d.startTime).Seconds() + 19
 	sp := int(scrollX / 64)
-	xs := math.Sin(t*0.25)*0.5 + 0.5
-	xs = math.Sqrt(math.Max(0, 1-xs*xs))
+	maxIndex := sp + 8
+	zSin, zCos := math.Sincos((t + float64(maxIndex)*0.15) * 5)
+	xSin, xCos := math.Sincos(t*7 + float64(maxIndex)*18)
+	ySin, yCos := math.Sincos((t + float64(maxIndex)*0.1) * 7)
 
-	for i := sp + 8; i >= sp; i-- {
+	for i := maxIndex; i >= sp; i-- {
+		currentZSin, currentXSin, currentYSin := zSin, xSin, ySin
+		zSin, zCos = stepSinCosBackward(zSin, zCos, vivaZSinStep, vivaZCosStep)
+		xSin, xCos = stepSinCosBackward(xSin, xCos, vivaXSinStep, vivaXCosStep)
+		ySin, yCos = stepSinCosBackward(ySin, yCos, vivaYSinStep, vivaYCosStep)
+
 		if i < 0 || i >= len(text) {
 			continue
 		}
 
-		z := math.Sin((t+float64(i)*0.15)*5)*0.5 + 1.5
+		z := currentZSin*0.5 + 1.5
 		charCode := int(text[i])
 		fontIndex := mapCharToFont4(charCode)
 
-		drawX := math.Floor((float64(i)*64 - 40 - math.Sin(t*7+float64(i)*18)*32*xs - scrollX) * 2)
-		drawY := math.Floor(math.Sin((t+float64(i)*0.1)*7)*42*(math.Sin(t*0.5)*0.5+0.5) + baseY - z*32)
+		drawX := math.Floor((float64(i)*64 - 40 - currentXSin*32*horizontalWave - scrollX) * 2)
+		drawY := math.Floor(currentYSin*42*verticalWave + baseY - z*32)
 
 		var scale float64
 		if scrollerID == 1 || scrollerID == 2 {
@@ -2495,11 +2694,7 @@ func (d *VivaDemo) drawScroller(dst *ebiten.Image, text []rune, scrollX float64,
 			continue
 		}
 
-		cols := 10
-		srcX := (fontIndex % cols) * fontCharWidth4
-		srcY := (fontIndex / cols) * fontCharHeight4
-
-		if srcY+fontCharHeight4 > d.fontImg.Bounds().Dy() {
+		if fontIndex < 0 || fontIndex >= len(d.fontTiles) || d.fontTiles[fontIndex] == nil {
 			continue
 		}
 
@@ -2508,8 +2703,7 @@ func (d *VivaDemo) drawScroller(dst *ebiten.Image, text []rune, scrollX float64,
 		op.GeoM.Translate(drawX, drawY)
 		op.ColorScale.Scale(1, 1, 1, 0.9)
 
-		charImg := d.fontImg.SubImage(image.Rect(srcX, srcY, srcX+fontCharWidth4, srcY+fontCharHeight4)).(*ebiten.Image)
-		dst.DrawImage(charImg, op)
+		dst.DrawImage(d.fontTiles[fontIndex], op)
 	}
 
 }
@@ -2518,7 +2712,11 @@ func advanceScroller4(scrollX float64, text []rune) float64 {
 	if len(text) == 0 {
 		return 0
 	}
-	return math.Mod(scrollX+4, float64(len(text)*64))
+	scrollX += 4
+	if limit := float64(len(text) * 64); scrollX >= limit {
+		scrollX -= limit
+	}
+	return scrollX
 }
 
 func (d *VivaDemo) Update() error {
@@ -2566,92 +2764,75 @@ func (d *VivaDemo) Draw(screen *ebiten.Image) {
 	zoom := 0.5 + math.Abs(math.Sin(d.posZi)*2.5)
 	rot := (360.0 / 4.0 * math.Cos(d.posRi*4-math.Cos(d.posRi-0.01))) * 0.3 * math.Pi / 180
 
-	oscX := (800.0 / 4) * math.Cos(d.posXi*4-math.Cos(d.posXi-0.1))
-	oscY := (600.0 / 2.7) * -math.Sin(d.posXi*2.3-math.Cos(d.posXi-0.1))
+	posXCurve := math.Cos(d.posXi - 0.1)
+	oscX := (800.0 / 4) * math.Cos(d.posXi*4-posXCurve)
+	oscY := (600.0 / 2.7) * -math.Sin(d.posXi*2.3-posXCurve)
 
 	centerX := 400.0 + oscX
 	centerY := 300.0 + oscY
 
 	drawRepeatingRotozoom(screen, d.tileImg, centerX, centerY, zoom, rot, demoWidth*8, demoHeight*8, 1)
 
-	d.drawScroller(screen, d.text1, d.scrollX1, 1, 500)
-	d.drawScroller(screen, d.text2, d.scrollX2, 2, 250)
-	d.drawScroller(screen, d.text3, d.scrollX3, 3, 375)
-	d.drawScroller(screen, d.text4, d.scrollX4, 4, 125)
+	t := float64(d.loopCounter)/60 + 19
+	wave := math.Sin(t*0.25)*0.5 + 0.5
+	horizontalWave := math.Sqrt(1 - wave*wave)
+	verticalWave := math.Sin(t*0.5)*0.5 + 0.5
+	d.drawScroller(screen, d.text1, d.scrollX1, 1, 500, t, horizontalWave, verticalWave)
+	d.drawScroller(screen, d.text2, d.scrollX2, 2, 250, t, horizontalWave, verticalWave)
+	d.drawScroller(screen, d.text3, d.scrollX3, 3, 375, t, horizontalWave, verticalWave)
+	d.drawScroller(screen, d.text4, d.scrollX4, 4, 125, t, horizontalWave, verticalWave)
 
 	// Black bar at top
 	vector.DrawFilledRect(screen, 0, 0, demoWidth, 72, color.Black, false)
 
-	// Draw title with rasters (match original pipeline)
-	if d.titleCanvasSmall != nil {
-		d.titleCanvasSmall.Fill(color.Black)
-
-		if d.rasterImg != nil {
-			titleBounds := d.titleCanvasSmall.Bounds()
-			titleWidth := float64(titleBounds.Dx())
-			rasterWidth := float64(d.rasterImg.Bounds().Dx())
-			if rasterWidth != 0 {
-				scaleRasterX := titleWidth / rasterWidth
-
-				op := &ebiten.DrawImageOptions{}
-				op.GeoM.Scale(scaleRasterX, 1)
-				op.GeoM.Translate(0, d.rasterY1)
-				d.titleCanvasSmall.DrawImage(d.rasterImg, op)
-
-				op = &ebiten.DrawImageOptions{}
-				op.GeoM.Scale(scaleRasterX, 1)
-				op.GeoM.Translate(0, d.rasterY2)
-				d.titleCanvasSmall.DrawImage(d.rasterImg, op)
-
-				op = &ebiten.DrawImageOptions{}
-				op.GeoM.Scale(scaleRasterX, 1)
-				op.GeoM.Translate(0, d.rasterY2+72)
-				d.titleCanvasSmall.DrawImage(d.rasterImg, op)
-			}
-		}
-
-		if d.titleImg != nil {
-			d.titleCanvasSmall.DrawImage(d.titleImg, nil)
-		}
-
-		if d.titleCanvas != nil {
-			d.titleCanvas.Fill(color.Black)
-			smallBounds := d.titleCanvasSmall.Bounds()
-			scaleX := float64(demoWidth) / float64(smallBounds.Dx())
-			scaleY := 72.0 / float64(smallBounds.Dy())
+	// Draw the moving title directly. A fixed destination sub-image clips the
+	// vertically tiled raster exactly like the former 528x36 render target,
+	// without forcing an extra render pass and a full-canvas copy.
+	titleX := 64 + 800*math.Cos(d.logoX)
+	vector.DrawFilledRect(screen, float32(titleX), 14, demoWidth, 72, color.Black, false)
+	titleViewport := screen.SubImage(image.Rect(0, 14, demoWidth, 86)).(*ebiten.Image)
+	if d.rasterImg != nil {
+		rasterScaleX := float64(demoWidth) / float64(d.rasterImg.Bounds().Dx())
+		for _, rasterY := range [...]float64{d.rasterY1, d.rasterY2, d.rasterY2 + 72} {
 			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Scale(scaleX, scaleY)
-			d.titleCanvas.DrawImage(d.titleCanvasSmall, op)
+			op.GeoM.Scale(rasterScaleX, 2)
+			op.GeoM.Translate(titleX, 14+2*rasterY)
+			titleViewport.DrawImage(d.rasterImg, op)
 		}
 	}
+	if d.titleImg != nil {
+		titleOp := &ebiten.DrawImageOptions{}
+		titleOp.GeoM.Scale(float64(demoWidth)/float64(d.titleImg.Bounds().Dx()), 2)
+		titleOp.GeoM.Translate(titleX, 14)
+		titleViewport.DrawImage(d.titleImg, titleOp)
+	}
 
-	// Draw title canvas with oscillation
-	titleX := 64 + 800*math.Cos(d.logoX)
-	titleOp := &ebiten.DrawImageOptions{}
-	titleOp.GeoM.Translate(titleX, 14)
-	screen.DrawImage(d.titleCanvas, titleOp)
-
-	// Draw animated logos
+	// Draw animated logos directly; the old 400x300 canvas was immediately
+	// scaled to the same 800x600 destination.
 	if d.logoImg != nil {
-		d.spriteCanvas.Clear()
-
 		midX := 200.0 - 16
 		midY := 24.0 + 150.0 - 16
 		incY := 150.0 / 4
+		base := float64(d.loopCounter)
+		xSin, xCos := math.Sincos(base / 25)
+		x2Sin, x2Cos := math.Sincos(base / 300)
+		ySin, yCos := math.Sincos(base / 37)
+		y2Sin, y2Cos := math.Sincos(base / 17)
 
 		for s := 0; s < 10; s++ {
-			nit := float64(d.loopCounter + s*5)
-			spX := midX + midX*math.Sin(nit/25)*math.Cos(nit/300)
-			spY := midY + incY*math.Sin(nit/37) + incY*math.Cos(nit/17)
+			spX := midX + midX*xSin*x2Cos
+			spY := midY + incY*ySin + incY*y2Cos
 
 			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Translate(spX, spY)
-			d.spriteCanvas.DrawImage(d.logoImg, op)
-		}
+			op.GeoM.Scale(2, 2)
+			op.GeoM.Translate(spX*2, spY*2)
+			screen.DrawImage(d.logoImg, op)
 
-		op := &ebiten.DrawImageOptions{}
-		op.GeoM.Scale(2, 2)
-		screen.DrawImage(d.spriteCanvas, op)
+			xSin, xCos = stepSinCosForward(xSin, xCos, vivaLogoXSinStep, vivaLogoXCosStep)
+			x2Sin, x2Cos = stepSinCosForward(x2Sin, x2Cos, vivaLogoX2SinStep, vivaLogoX2CosStep)
+			ySin, yCos = stepSinCosForward(ySin, yCos, vivaLogoYSinStep, vivaLogoYCosStep)
+			y2Sin, y2Cos = stepSinCosForward(y2Sin, y2Cos, vivaLogoY2SinStep, vivaLogoY2CosStep)
+		}
 	}
 }
 
@@ -2663,7 +2844,10 @@ type MegaDemoGame struct {
 	demo3 *CocoDemo
 	demo4 *VivaDemo
 
-	demoCanvases [4]*ebiten.Image
+	demoCanvases      [4]*ebiten.Image
+	compositeShader   *ebiten.Shader
+	compositeCenter   [2]float32
+	compositeUniforms map[string]any
 
 	audioContext *audio.Context
 	audioPlayer  *audio.Player
@@ -2675,11 +2859,8 @@ type MegaDemoGame struct {
 	cameraX float64
 	cameraY float64
 
-	targetX float64
-	targetY float64
-
-	transitionStart float64
-	transitionTime  float64
+	transitionTime float64
+	needsRedraw    bool
 }
 
 func NewMegaDemoGame() *MegaDemoGame {
@@ -2695,11 +2876,19 @@ func NewMegaDemoGame() *MegaDemoGame {
 			ebiten.NewImage(demoWidth, demoHeight),
 		},
 		cameraState:  StateDemo1,
+		needsRedraw:  true,
 		cameraX:      0,
 		cameraY:      0,
-		targetX:      0,
-		targetY:      0,
 		audioContext: audio.NewContext(sampleRate),
+	}
+	var shaderErr error
+	g.compositeShader, shaderErr = ebiten.NewShader([]byte(compositeShaderSource))
+	if shaderErr != nil {
+		log.Printf("Failed to compile camera compositor shader: %v", shaderErr)
+	}
+	g.compositeUniforms = map[string]any{
+		"CameraCenter": g.compositeCenter[:],
+		"CameraZoom":   float32(1),
 	}
 
 	// Initialize music
@@ -2722,11 +2911,22 @@ func NewMegaDemoGame() *MegaDemoGame {
 }
 
 func (g *MegaDemoGame) Update() error {
-	// Update all demos
-	g.demo1.Update()
-	g.demo2.Update()
-	g.demo3.Update()
-	g.demo4.Update()
+	g.needsRedraw = true
+
+	// Keep every screen synchronized so transitions and the zoomed-out view
+	// always reveal a continuously running demo.
+	if err := g.demo1.Update(); err != nil {
+		return fmt.Errorf("phenomena demo: %w", err)
+	}
+	if err := g.demo2.Update(); err != nil {
+		return fmt.Errorf("tcb demo: %w", err)
+	}
+	if err := g.demo3.Update(); err != nil {
+		return fmt.Errorf("coco demo: %w", err)
+	}
+	if err := g.demo4.Update(); err != nil {
+		return fmt.Errorf("viva demo: %w", err)
+	}
 
 	// Update state machine
 	dt := 1.0 / 60.0
@@ -2736,7 +2936,6 @@ func (g *MegaDemoGame) Update() error {
 	case StateDemo1:
 		if g.stateTimer >= viewDuration {
 			g.cameraState = StateTransition1to2
-			g.transitionStart = 0
 			g.transitionTime = 0
 			g.stateTimer = 0
 		}
@@ -2758,7 +2957,6 @@ func (g *MegaDemoGame) Update() error {
 	case StateDemo2:
 		if g.stateTimer >= viewDuration {
 			g.cameraState = StateTransition2to3
-			g.transitionStart = 0
 			g.transitionTime = 0
 			g.stateTimer = 0
 		}
@@ -2780,7 +2978,6 @@ func (g *MegaDemoGame) Update() error {
 	case StateDemo3:
 		if g.stateTimer >= viewDuration {
 			g.cameraState = StateTransition3to4
-			g.transitionStart = 0
 			g.transitionTime = 0
 			g.stateTimer = 0
 		}
@@ -2802,7 +2999,6 @@ func (g *MegaDemoGame) Update() error {
 	case StateDemo4:
 		if g.stateTimer >= viewDuration {
 			g.cameraState = StateTransition4toZoom
-			g.transitionStart = 0
 			g.transitionTime = 0
 			g.stateTimer = 0
 		}
@@ -2821,7 +3017,6 @@ func (g *MegaDemoGame) Update() error {
 	case StateZoomOut:
 		if g.stateTimer >= viewDuration {
 			g.cameraState = StateLoop
-			g.transitionStart = 0
 			g.transitionTime = 0
 			g.stateTimer = 0
 		}
@@ -2845,6 +3040,28 @@ func (g *MegaDemoGame) Update() error {
 }
 
 func (g *MegaDemoGame) Draw(screen *ebiten.Image) {
+	if !g.needsRedraw {
+		return
+	}
+	g.needsRedraw = false
+
+	// The four stable camera states cover the whole screen. Drawing directly
+	// avoids a full 800x600 render target and copy on the common path.
+	switch g.cameraState {
+	case StateDemo1:
+		g.demo1.Draw(screen)
+		return
+	case StateDemo2:
+		g.demo2.Draw(screen)
+		return
+	case StateDemo3:
+		g.demo3.Draw(screen)
+		return
+	case StateDemo4:
+		g.demo4.Draw(screen)
+		return
+	}
+
 	centerX := g.cameraX + float64(demoWidth)/2
 	centerY := g.cameraY + float64(demoHeight)/2
 	zoom := 1.0
@@ -2888,18 +3105,39 @@ func (g *MegaDemoGame) Draw(screen *ebiten.Image) {
 		zoom = 0.5
 	}
 
+	for demoIndex := 0; demoIndex < len(g.demoCanvases); demoIndex++ {
+		if mask&(1<<demoIndex) == 0 {
+			continue
+		}
+		g.renderDemo(demoIndex)
+	}
+
+	if g.compositeShader != nil {
+		g.compositeCenter[0], g.compositeCenter[1] = float32(centerX), float32(centerY)
+		g.compositeUniforms["CameraZoom"] = float32(zoom)
+		op := &ebiten.DrawRectShaderOptions{Uniforms: g.compositeUniforms, Blend: ebiten.BlendCopy}
+		for i, canvas := range g.demoCanvases {
+			if mask&(1<<i) != 0 {
+				op.Images[i] = canvas
+			}
+		}
+		screen.DrawRectShader(demoWidth, demoHeight, g.compositeShader, op)
+		return
+	}
+
+	// Compilation is covered by tests, but retain a conventional fallback for
+	// graphics backends that reject the shader at runtime.
 	screen.Fill(color.Black)
 	for demoIndex := 0; demoIndex < len(g.demoCanvases); demoIndex++ {
 		if mask&(1<<demoIndex) == 0 {
 			continue
 		}
-		canvas := g.renderDemo(demoIndex)
 		originX, originY := demoOrigin(demoIndex)
 		op := &ebiten.DrawImageOptions{}
 		op.GeoM.Translate(originX-centerX, originY-centerY)
 		op.GeoM.Scale(zoom, zoom)
 		op.GeoM.Translate(float64(demoWidth)/2, float64(demoHeight)/2)
-		screen.DrawImage(canvas, op)
+		screen.DrawImage(g.demoCanvases[demoIndex], op)
 	}
 }
 
@@ -2941,7 +3179,6 @@ func demoOrigin(index int) (float64, float64) {
 
 func (g *MegaDemoGame) renderDemo(index int) *ebiten.Image {
 	canvas := g.demoCanvases[index]
-	canvas.Clear()
 	switch index {
 	case 0:
 		g.demo1.Draw(canvas)
