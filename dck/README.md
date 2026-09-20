@@ -4,4 +4,10 @@ This directory contains the construction-kit version of go-multiscreen. The orig
 
 Run the original with `go run ./cmd/multiscreen` and this version with `go run ./dck/cmd/multiscreen` from the repository root.
 
-The choreography and assets stay local; reusable rendering and effects live in `../../lib/democonstructionkit`. Second Reality retains its original ST3 music synchronization.
+The choreography and assets stay local; reusable rendering and effects live in `../../lib/democonstructionkit`.
+
+## Shared component effects
+
+The Phenomena and TCB scenes use the same `DNAFrames`, `Planes` and `PlaneRenderer` implementations as their standalone DCK demos. Their original timing, raster palettes and the multiscreen camera remain local.
+
+See the [DCK effect configuration guide](../../../lib/democonstructionkit/docs/EFFECT_OPTIONS.md) for the shared API and examples.
