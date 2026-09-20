@@ -1,9 +1,13 @@
 package multiscreen
 
+import originalassets "multiscreen-mega-demo"
+
 import (
 	"bytes"
-	_ "embed"
+
 	"fmt"
+	"github.com/olivierh59500/democonstructionkit/composite"
+	"github.com/olivierh59500/democonstructionkit/scrolling"
 	"image"
 	"image/color"
 	_ "image/png"
@@ -58,10 +62,11 @@ func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
 }
 `
 
-//go:embed assets/music.ym
-var musicData []byte
+var musicData = originalassets.
 
-// Camera states
+	// Camera states
+	DCKAssetMusicData()
+
 type CameraState int
 
 const (
@@ -161,19 +166,20 @@ func easeInOutCubic(t float64) float64 {
 
 // ==================== PHENOMENA DEMO (Demo1) ====================
 
-//go:embed assets/phenomena/rasterbar.png
-var demo1RasterbarData []byte
+var demo1RasterbarData = originalassets.
+	DCKAssetDemo1RasterbarData()
 
-//go:embed assets/phenomena/font.png
-var demo1FontData []byte
+var demo1FontData = originalassets.
+	DCKAssetDemo1FontData()
 
-//go:embed assets/phenomena/logo.png
-var demo1LogoData []byte
+var demo1LogoData = originalassets.
+	DCKAssetDemo1LogoData()
 
-//go:embed assets/phenomena/photon.png
-var demo1PhotonData []byte
+var demo1PhotonData = originalassets.DCKAssetDemo1PhotonData()
 
 type PhenomenaDemo struct {
+	scrollRenderer *scrolling.Scrolling
+	scrollBatch    *composite.QuadBatch
 	// Demo state
 	state       int
 	initialized bool
@@ -931,55 +937,41 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 }
 
 func (d *PhenomenaDemo) drawScroller(screen *ebiten.Image) {
-	d.scrollVertices = d.scrollVertices[:0]
-	d.scrollIndices = d.scrollIndices[:0]
-	const (
-		scaleX     = float32(1.67)
-		scaleY     = float32(1.875)
-		translateY = float32(195)
-	)
-
+	if d.scrollRenderer == nil {
+		var err error
+		d.scrollRenderer, err = scrolling.FromImages(make([]*ebiten.Image, 240), 2)
+		if err != nil {
+			panic(err)
+		}
+		d.scrollBatch = composite.NewQuadBatch(240)
+		d.scrollBatch.AlternateDiagonal = true
+	}
+	d.scrollBatch.Begin(screen, d.cnvFrames)
+	const scaleX, scaleY, translateY = float32(1.67), float32(1.875), float32(195)
 	t2 := d.t
 	waveSin, waveCos := math.Sincos(5*10.50 + d.t/6)
-	for i := 0; i < 240; i++ {
-		charIndex := d.scrollHead + i
-		if charIndex >= len(d.scrollChars) {
-			charIndex -= len(d.scrollChars)
+	state := scrolling.IdentityState()
+	state.Paint = func(dst *ebiten.Image, s scrolling.Sample, op ebiten.DrawImageOptions) {
+		i := s.Index
+		index := d.scrollHead + i
+		if index >= len(d.scrollChars) {
+			index -= len(d.scrollChars)
 		}
-		char := d.scrollChars[charIndex]
-		var ypos float64
-		if t2 > 5*50-float64(i)*0.0033 {
+		ch := d.scrollChars[index]
+		ypos := 80.0
+		if t2 > 5*50-float64(i)*.0033 {
 			ypos = 80 * waveCos
-		} else {
-			ypos = 80
 		}
-
-		charsetIdx := int(char.glyph)
-		if charsetIdx >= 0 && charsetIdx < len(charsetPhenomena) {
-			frame := int(char.frame)
-			slice := int(char.slice)
-
-			sx := frame*16 + slice*2
-			sy := charsetIdx * 33
-
-			if sx >= 0 && sx <= 480-2 && sy >= 0 && sy <= len(charsetPhenomena)*33-33 {
-				d.scrollVertices, d.scrollIndices = appendTexturedQuad(
-					d.scrollVertices, d.scrollIndices,
-					float32(i*2)*scaleX, translateY+float32(67+ypos)*scaleY, 2*scaleX, 33*scaleY,
-					float32(sx), float32(sy), 2, 33,
-				)
-			}
+		ci := int(ch.glyph)
+		sx, sy := int(ch.frame)*16+int(ch.slice)*2, ci*33
+		if ci >= 0 && ci < len(charsetPhenomena) && sx >= 0 && sx <= 478 && sy >= 0 && sy <= len(charsetPhenomena)*33-33 {
+			d.scrollBatch.Rect(image.Rect(sx, sy, sx+2, sy+33), float32(i*2)*scaleX, translateY+float32(67+ypos)*scaleY, 2*scaleX, 33*scaleY)
 		}
-
 		t2 += 1.0 / 6.0
-		waveSin, waveCos =
-			waveSin*phenomenaWaveCosStep+waveCos*phenomenaWaveSinStep,
-			waveCos*phenomenaWaveCosStep-waveSin*phenomenaWaveSinStep
+		waveSin, waveCos = waveSin*phenomenaWaveCosStep+waveCos*phenomenaWaveSinStep, waveCos*phenomenaWaveCosStep-waveSin*phenomenaWaveSinStep
 	}
-	if len(d.scrollIndices) > 0 {
-		op := &ebiten.DrawTrianglesOptions{Filter: ebiten.FilterNearest}
-		screen.DrawTriangles(d.scrollVertices, d.scrollIndices, d.cnvFrames, op)
-	}
+	d.scrollRenderer.DrawAt(screen, state)
+	d.scrollBatch.Flush()
 }
 
 func hslToRGB(h, s, l float64) (float64, float64, float64) {
@@ -1039,55 +1031,22 @@ func appendTexturedQuad(vertices []ebiten.Vertex, indices []uint16, dstX, dstY, 
 // drawRepeatingRotozoom renders an infinitely repeated texture directly into
 // the destination. This replaces the very large pre-tiled background images
 // while preserving the same affine texture mapping.
-func drawRepeatingRotozoom(dst, texture *ebiten.Image, centerX, centerY, zoom, rotation, phaseX, phaseY float64, brightness float32) {
-	if texture == nil || zoom <= 0 {
-		return
-	}
-
-	bounds := dst.Bounds()
-	corners := [4][2]float64{
-		{float64(bounds.Min.X), float64(bounds.Min.Y)},
-		{float64(bounds.Max.X), float64(bounds.Min.Y)},
-		{float64(bounds.Min.X), float64(bounds.Max.Y)},
-		{float64(bounds.Max.X), float64(bounds.Max.Y)},
-	}
-	cosR, sinR := math.Cos(rotation), math.Sin(rotation)
-	var vertices [4]ebiten.Vertex
-	for i, corner := range corners {
-		x := (corner[0] - centerX) / zoom
-		y := (corner[1] - centerY) / zoom
-		vertices[i] = ebiten.Vertex{
-			DstX:   float32(corner[0]),
-			DstY:   float32(corner[1]),
-			SrcX:   float32(x*cosR + y*sinR + phaseX),
-			SrcY:   float32(-x*sinR + y*cosR + phaseY),
-			ColorR: brightness,
-			ColorG: brightness,
-			ColorB: brightness,
-			ColorA: 1,
-		}
-	}
-
-	op := &ebiten.DrawTrianglesOptions{
-		Address: ebiten.AddressRepeat,
-		Filter:  ebiten.FilterNearest,
-	}
-	dst.DrawTriangles(vertices[:], repeatingQuadIndices[:], texture, op)
+func drawRepeatingRotozoom(dst, texture *ebiten.Image, cx, cy, zoom, rotation, px, py float64, brightness float32) {
+	composite.Repeat(dst, texture, composite.Repetition{CenterX: cx, CenterY: cy, Zoom: zoom, Rotation: rotation, PhaseX: px, PhaseY: py, Color: [4]float32{brightness, brightness, brightness, 1}})
 }
 
 // ==================== TCB DEMO (Demo2) ====================
 
-//go:embed assets/tcb/rast.png
-var demo2RastData []byte
+var demo2RastData = originalassets.
+	DCKAssetDemo2RastData()
 
-//go:embed assets/tcb/mountains.png
-var demo2MountainsData []byte
+var demo2MountainsData = originalassets.
+	DCKAssetDemo2MountainsData()
 
-//go:embed assets/tcb/logo.png
-var demo2LogoData []byte
+var demo2LogoData = originalassets.
+	DCKAssetDemo2LogoData()
 
-//go:embed assets/tcb/bgfont.png
-var demo2FontData []byte
+var demo2FontData = originalassets.DCKAssetDemo2FontData()
 
 type ScrollForm struct {
 	zSize   float64
@@ -1569,20 +1528,19 @@ func (d *TCBDemo) drawScroll3D(screen *ebiten.Image) {
 
 // ==================== COCO DEMO (Demo3) ====================
 
-//go:embed assets/coco/dma-70.png
-var demo3TitleData []byte
+var demo3TitleData = originalassets.
+	DCKAssetDemo3TitleData()
 
-//go:embed assets/coco/bars.png
-var demo3BarsData []byte
+var demo3BarsData = originalassets.
+	DCKAssetDemo3BarsData()
 
-//go:embed assets/coco/coco.png
-var demo3CocoData []byte
+var demo3CocoData = originalassets.
+	DCKAssetDemo3CocoData()
 
-//go:embed assets/coco/small-dma-jelly.png
-var demo3DmaLogoData []byte
+var demo3DmaLogoData = originalassets.
+	DCKAssetDemo3DmaLogoData()
 
-//go:embed assets/coco/font.png
-var demo3FontData []byte
+var demo3FontData = originalassets.DCKAssetDemo3FontData()
 
 const (
 	nbCubes3               = 12
@@ -1705,7 +1663,8 @@ var (
 )
 
 type CocoDemo struct {
-	initialized bool
+	scrollRenderer *scrolling.Scrolling
+	initialized    bool
 
 	titleImg   *ebiten.Image
 	barsImg    *ebiten.Image
@@ -2117,24 +2076,28 @@ func (d *CocoDemo) displayText3(letterOffset int) {
 	}
 	d.lastTextOffset = letterOffset
 	d.scrollSurf.Clear()
-
-	xPos := 0
-	i := 0
-	maxWidth := d.scrollSurf.Bounds().Dx()
-
-	for xPos < maxWidth {
-		char := d.getLetter3(i + letterOffset)
-		if letter := d.letterData[char]; letter.width > 0 {
-			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Scale(scrollScaleFactor3, scrollScaleFactor3)
-			op.GeoM.Translate(float64(xPos), 0)
-			d.scrollSurf.DrawImage(d.fontTiles[char], op)
-			xPos += int(float64(letter.width) * scrollScaleFactor3)
-		} else {
-			xPos += 32 * scrollScaleInt3
+	if d.scrollRenderer == nil {
+		glyphs := make([]scrolling.Glyph, len(d.scrollText))
+		for i := range d.scrollText {
+			r := d.scrollText[i]
+			letter := d.letterData[r]
+			if letter.width > 0 {
+				glyphs[i] = scrolling.Glyph{Image: d.fontTiles[r], Advance: float64(letter.width)}
+			} else {
+				glyphs[i] = scrolling.Glyph{Advance: 32}
+			}
 		}
-		i++
+		var err error
+		d.scrollRenderer, err = scrolling.New(scrolling.Config{Glyphs: glyphs})
+		if err != nil {
+			panic(err)
+		}
 	}
+	state := d.scrollRenderer.Window(letterOffset, float64(d.scrollSurf.Bounds().Dx())/scrollScaleFactor3)
+	state.X *= scrollScaleFactor3
+	state.ScaleX = scrollScaleFactor3
+	state.ScaleY = scrollScaleFactor3
+	d.scrollRenderer.DrawAt(d.scrollSurf, state)
 }
 
 func (d *CocoDemo) draw3DCubes3(dst *ebiten.Image) {
@@ -2488,20 +2451,19 @@ func (d *CocoDemo) getLetter3(pos int) byte {
 
 // ==================== VIVA TCB DEMO (Demo4) ====================
 
-//go:embed assets/viva/logo.png
-var demo4LogoData []byte
+var demo4LogoData = originalassets.
+	DCKAssetDemo4LogoData()
 
-//go:embed assets/viva/title.png
-var demo4TitleData []byte
+var demo4TitleData = originalassets.
+	DCKAssetDemo4TitleData()
 
-//go:embed assets/viva/raster.png
-var demo4RasterData []byte
+var demo4RasterData = originalassets.
+	DCKAssetDemo4RasterData()
 
-//go:embed assets/viva/tcb_tile.png
-var demo4TileData []byte
+var demo4TileData = originalassets.
+	DCKAssetDemo4TileData()
 
-//go:embed assets/viva/font.png
-var demo4FontData []byte
+var demo4FontData = originalassets.DCKAssetDemo4FontData()
 
 const (
 	fontCharWidth4  = 42
@@ -2519,7 +2481,8 @@ var (
 )
 
 type VivaDemo struct {
-	initialized bool
+	scrollPrograms [4]*scrolling.Scrolling
+	initialized    bool
 
 	logoImg   *ebiten.Image
 	titleImg  *ebiten.Image
@@ -2649,63 +2612,61 @@ func stepSinCosForward(sinValue, cosValue, sinStep, cosStep float64) (float64, f
 }
 
 func (d *VivaDemo) drawScroller(dst *ebiten.Image, text []rune, scrollX float64, scrollerID int, baseY, t, horizontalWave, verticalWave float64) {
-	if d.fontImg == nil {
+	if d.fontImg == nil || len(text) == 0 {
 		return
 	}
-
-	if len(text) == 0 {
-		return
-	}
-
-	sp := int(scrollX / 64)
-	maxIndex := sp + 8
-	zSin, zCos := math.Sincos((t + float64(maxIndex)*0.15) * 5)
-	xSin, xCos := math.Sincos(t*7 + float64(maxIndex)*18)
-	ySin, yCos := math.Sincos((t + float64(maxIndex)*0.1) * 7)
-
-	for i := maxIndex; i >= sp; i-- {
-		currentZSin, currentXSin, currentYSin := zSin, xSin, ySin
-		zSin, zCos = stepSinCosBackward(zSin, zCos, vivaZSinStep, vivaZCosStep)
-		xSin, xCos = stepSinCosBackward(xSin, xCos, vivaXSinStep, vivaXCosStep)
-		ySin, yCos = stepSinCosBackward(ySin, yCos, vivaYSinStep, vivaYCosStep)
-
-		if i < 0 || i >= len(text) {
-			continue
+	program := d.scrollPrograms[scrollerID-1]
+	if program == nil {
+		images := make([]*ebiten.Image, len(text))
+		for i, r := range text {
+			index := mapCharToFont4(int(r))
+			if index >= 0 && index < len(d.fontTiles) {
+				images[i] = d.fontTiles[index]
+			}
 		}
-
-		z := currentZSin*0.5 + 1.5
-		charCode := int(text[i])
-		fontIndex := mapCharToFont4(charCode)
-
-		drawX := math.Floor((float64(i)*64 - 40 - currentXSin*32*horizontalWave - scrollX) * 2)
-		drawY := math.Floor(currentYSin*42*verticalWave + baseY - z*32)
-
-		var scale float64
+		var err error
+		program, err = scrolling.FromImages(images, 64)
+		if err != nil {
+			panic(err)
+		}
+		d.scrollPrograms[scrollerID-1] = program
+	}
+	first := int(scrollX / 64)
+	last := first + 8
+	zs, zc := math.Sincos((t + float64(last)*.15) * 5)
+	xs, xc := math.Sincos(t*7 + float64(last)*18)
+	ys, yc := math.Sincos((t + float64(last)*.1) * 7)
+	advance := func() {
+		zs, zc = stepSinCosBackward(zs, zc, vivaZSinStep, vivaZCosStep)
+		xs, xc = stepSinCosBackward(xs, xc, vivaXSinStep, vivaXCosStep)
+		ys, yc = stepSinCosBackward(ys, yc, vivaYSinStep, vivaYCosStep)
+	}
+	for i := last; i >= len(text); i-- {
+		advance()
+	}
+	state := scrolling.IdentityState()
+	state.First = first
+	state.End = last + 1
+	state.Reverse = true
+	state.Map = func(s scrolling.Sample, op *ebiten.DrawImageOptions) bool {
+		z, xsin, ysin := zs*.5+1.5, xs, ys
+		advance()
+		x := math.Floor((float64(s.Index)*64 - 40 - xsin*32*horizontalWave - scrollX) * 2)
+		y := math.Floor(ysin*42*verticalWave + baseY - z*32)
+		scale := z
 		if scrollerID == 1 || scrollerID == 2 {
 			scale = 3 - z
-		} else {
-			scale = z
 		}
-
-		if drawX < -100 || drawX > float64(demoWidth)+100 || drawY < -100 || drawY > float64(demoHeight)+100 {
-			continue
+		if x < -100 || x > float64(demoWidth)+100 || y < -100 || y > float64(demoHeight)+100 || scale <= .1 {
+			return false
 		}
-		if scale <= 0.1 {
-			continue
-		}
-
-		if fontIndex < 0 || fontIndex >= len(d.fontTiles) || d.fontTiles[fontIndex] == nil {
-			continue
-		}
-
-		op := &ebiten.DrawImageOptions{}
+		op.GeoM.Reset()
 		op.GeoM.Scale(scale, scale)
-		op.GeoM.Translate(drawX, drawY)
-		op.ColorScale.Scale(1, 1, 1, 0.9)
-
-		dst.DrawImage(d.fontTiles[fontIndex], op)
+		op.GeoM.Translate(x, y)
+		op.ColorScale.Scale(1, 1, 1, .9)
+		return true
 	}
-
+	program.DrawAt(dst, state)
 }
 
 func advanceScroller4(scrollX float64, text []rune) float64 {
