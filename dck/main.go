@@ -4,6 +4,7 @@ import originalassets "multiscreen-mega-demo"
 
 import (
 	"bytes"
+	"github.com/olivierh59500/democonstructionkit/presets"
 
 	"fmt"
 	"github.com/olivierh59500/democonstructionkit/composite"
@@ -178,8 +179,7 @@ var demo1LogoData = originalassets.
 var demo1PhotonData = originalassets.DCKAssetDemo1PhotonData()
 
 type PhenomenaDemo struct {
-	scrollRenderer *scrolling.Scrolling
-	scrollBatch    *composite.QuadBatch
+	dnaFrames *scrolling.DNAFrames
 	// Demo state
 	state       int
 	initialized bool
@@ -225,11 +225,7 @@ type PhenomenaDemo struct {
 	sineOffsets    [240]float64
 }
 
-type ScrollChar struct {
-	glyph uint8
-	frame uint8
-	slice uint8
-}
+type ScrollChar = scrolling.DNASlice
 
 type GradientStop struct {
 	Color  color.RGBA
@@ -510,110 +506,20 @@ func lerpColor(c1, c2 color.RGBA, t float64) color.RGBA {
 }
 
 func (d *PhenomenaDemo) initCharacterFrames() {
-	cnvRedBar := createGradient(480, 9, gdcRedBar)
-	cnvSilverBar := createGradient(480, 33, gdcSilverBar)
-	cnvPurpleBar := createGradient(480, 33, gdcPurpleBar)
-	defer cnvRedBar.Dispose()
-	defer cnvSilverBar.Dispose()
-	defer cnvPurpleBar.Dispose()
-
-	cnvFont := ebiten.NewImage(len(charsetPhenomena)*16, 33)
-	cnvFont2 := ebiten.NewImage(len(charsetPhenomena)*16, 33)
-	defer cnvFont.Dispose()
-	defer cnvFont2.Dispose()
-
-	cnvFont.Fill(color.RGBA{0, 0, 0, 0})
-	cnvFont2.Fill(color.RGBA{0, 0, 0, 0})
-
-	for chr := 0; chr < len(charsetPhenomena); chr++ {
-		for x := 0; x < 16; x += 2 {
-			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Translate(float64(chr*16+x), 7)
-
-			sx := chr*16 + x
-			subImg := d.imgFont.SubImage(image.Rect(sx, 0, sx+2, 26)).(*ebiten.Image)
-			cnvFont.DrawImage(subImg, op)
-		}
+	core, front, back := createGradient(480, 9, gdcRedBar), createGradient(480, 33, gdcSilverBar), createGradient(480, 33, gdcPurpleBar)
+	defer core.Deallocate()
+	defer front.Deallocate()
+	defer back.Deallocate()
+	glyphs := make([]*ebiten.Image, len(charsetPhenomena))
+	for i := range glyphs {
+		glyphs[i] = d.imgFont.SubImage(image.Rect(i*16, 0, (i+1)*16, 26)).(*ebiten.Image)
 	}
-
-	for chr := 0; chr < len(charsetPhenomena); chr++ {
-		op := &ebiten.DrawImageOptions{}
-		op.GeoM.Scale(-1, -1)
-		op.GeoM.Translate(float64((chr+1)*16), 26)
-
-		sx := chr * 16
-		subImg := cnvFont.SubImage(image.Rect(sx, 0, sx+16, 33)).(*ebiten.Image)
-		cnvFont2.DrawImage(subImg, op)
+	var err error
+	d.dnaFrames, err = scrolling.NewDNAFrames(glyphs, scrolling.DNAFrameConfig{Frames: 30, Height: 33, Step: 2.25, Front: front, Back: back, Core: core, CoreY: 12})
+	if err != nil {
+		panic(err)
 	}
-
-	d.cnvFrames = ebiten.NewImage(480, len(charsetPhenomena)*33)
-
-	for charIndex := 0; charIndex < len(charsetPhenomena); charIndex++ {
-		cnvSilverChars := ebiten.NewImage(480, 33)
-		posX := 0
-		for posY := 33.0; posY > -33; posY -= 2.25 {
-			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Translate(float64(posX), posY)
-
-			sx := charIndex * 16
-			subImg := cnvFont.SubImage(image.Rect(sx, 0, sx+16, 33)).(*ebiten.Image)
-			cnvSilverChars.DrawImage(subImg, op)
-			posX += 16
-		}
-
-		cnvPurpleChars := ebiten.NewImage(480, 33)
-		posX = 0
-		for posY := 0.0; posY < 33; posY += 2.25 {
-			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Translate(float64(posX), posY)
-
-			sx := charIndex * 16
-			subImg := cnvFont2.SubImage(image.Rect(sx, 0, sx+16, 33)).(*ebiten.Image)
-			cnvPurpleChars.DrawImage(subImg, op)
-			posX += 16
-		}
-		for posY := -33.0; posY < 0; posY += 2.25 {
-			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Translate(float64(posX), posY)
-
-			sx := charIndex * 16
-			subImg := cnvFont2.SubImage(image.Rect(sx, 0, sx+16, 33)).(*ebiten.Image)
-			cnvPurpleChars.DrawImage(subImg, op)
-			posX += 16
-		}
-
-		tmpSilver := ebiten.NewImage(480, 33)
-		tmpSilver.DrawImage(cnvSilverBar, nil)
-		opSilver := &ebiten.DrawImageOptions{}
-		opSilver.CompositeMode = ebiten.CompositeModeDestinationIn
-		tmpSilver.DrawImage(cnvSilverChars, opSilver)
-
-		tmpPurple := ebiten.NewImage(480, 33)
-		tmpPurple.DrawImage(cnvPurpleBar, nil)
-		opPurple := &ebiten.DrawImageOptions{}
-		opPurple.CompositeMode = ebiten.CompositeModeDestinationIn
-		tmpPurple.DrawImage(cnvPurpleChars, opPurple)
-
-		frameY := charIndex * 33
-
-		op := &ebiten.DrawImageOptions{}
-		op.GeoM.Translate(0, float64(frameY))
-		d.cnvFrames.DrawImage(tmpPurple, op)
-
-		op.GeoM.Reset()
-		op.GeoM.Translate(0, float64(frameY+12))
-		d.cnvFrames.DrawImage(cnvRedBar, op)
-
-		op.GeoM.Reset()
-		op.GeoM.Translate(0, float64(frameY))
-		d.cnvFrames.DrawImage(tmpSilver, op)
-
-		cnvSilverChars.Dispose()
-		cnvPurpleChars.Dispose()
-		tmpSilver.Dispose()
-		tmpPurple.Dispose()
-	}
-
+	d.cnvFrames = d.dnaFrames.Image
 }
 
 func (d *PhenomenaDemo) scrollMessage(speed int) {
@@ -676,16 +582,16 @@ func (d *PhenomenaDemo) addSliceOfChar(ch byte, slice int) {
 	if tail >= len(d.scrollChars) {
 		tail -= len(d.scrollChars)
 	}
-	f := d.scrollChars[previous].frame
+	f := d.scrollChars[previous].Frame
 	glyph, ok := charToFontIndexPhe(rune(ch))
 	if !ok {
 		glyph = 0
 	}
 
 	d.scrollChars[tail] = ScrollChar{
-		glyph: uint8(glyph),
-		frame: f,
-		slice: uint8(slice),
+		Glyph: glyph,
+		Frame: f,
+		Slice: slice,
 	}
 }
 
@@ -710,7 +616,7 @@ func (d *PhenomenaDemo) renderNextFrames(speed float64) {
 			newFrame += 30
 		}
 
-		d.scrollChars[index].frame = uint8(newFrame)
+		d.scrollChars[index].Frame = int(newFrame)
 	}
 }
 
@@ -937,41 +843,17 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 }
 
 func (d *PhenomenaDemo) drawScroller(screen *ebiten.Image) {
-	if d.scrollRenderer == nil {
-		var err error
-		d.scrollRenderer, err = scrolling.FromImages(make([]*ebiten.Image, 240), 2)
-		if err != nil {
-			panic(err)
-		}
-		d.scrollBatch = composite.NewQuadBatch(240)
-		d.scrollBatch.AlternateDiagonal = true
-	}
-	d.scrollBatch.Begin(screen, d.cnvFrames)
-	const scaleX, scaleY, translateY = float32(1.67), float32(1.875), float32(195)
 	t2 := d.t
-	waveSin, waveCos := math.Sincos(5*10.50 + d.t/6)
-	state := scrolling.IdentityState()
-	state.Paint = func(dst *ebiten.Image, s scrolling.Sample, op ebiten.DrawImageOptions) {
-		i := s.Index
-		index := d.scrollHead + i
-		if index >= len(d.scrollChars) {
-			index -= len(d.scrollChars)
-		}
-		ch := d.scrollChars[index]
-		ypos := 80.0
+	ws, wc := math.Sincos(5*10.50 + d.t/6)
+	d.dnaFrames.DrawSlices(screen, d.scrollChars[:], d.scrollHead, scrolling.DNADrawConfig{SliceWidth: 2, ScaleX: 1.67, ScaleY: 1.875, OriginY: 195, Y: func(i int) float64 {
+		y := 80.0
 		if t2 > 5*50-float64(i)*.0033 {
-			ypos = 80 * waveCos
-		}
-		ci := int(ch.glyph)
-		sx, sy := int(ch.frame)*16+int(ch.slice)*2, ci*33
-		if ci >= 0 && ci < len(charsetPhenomena) && sx >= 0 && sx <= 478 && sy >= 0 && sy <= len(charsetPhenomena)*33-33 {
-			d.scrollBatch.Rect(image.Rect(sx, sy, sx+2, sy+33), float32(i*2)*scaleX, translateY+float32(67+ypos)*scaleY, 2*scaleX, 33*scaleY)
+			y = 80 * wc
 		}
 		t2 += 1.0 / 6.0
-		waveSin, waveCos = waveSin*phenomenaWaveCosStep+waveCos*phenomenaWaveSinStep, waveCos*phenomenaWaveCosStep-waveSin*phenomenaWaveSinStep
-	}
-	d.scrollRenderer.DrawAt(screen, state)
-	d.scrollBatch.Flush()
+		ws, wc = ws*phenomenaWaveCosStep+wc*phenomenaWaveSinStep, wc*phenomenaWaveCosStep-ws*phenomenaWaveSinStep
+		return 67 + y
+	}})
 }
 
 func hslToRGB(h, s, l float64) (float64, float64, float64) {
@@ -1048,62 +930,27 @@ var demo2LogoData = originalassets.
 
 var demo2FontData = originalassets.DCKAssetDemo2FontData()
 
-type ScrollForm struct {
-	zSize   float64
-	zAmount float64
-	zSpeed  float64
-	zAdd    float64
-	ySize   float64
-	yAmount float64
-	ySpeed  float64
-}
-
-type PrintPos struct {
-	x, y, z float64
-	letter  byte
-}
-
-const tcbScrollShaderSource = `//kage:unit pixels
-
-package main
-
-func Fragment(dstPos vec4, srcPos vec2, custom vec4) vec4 {
-	glyph := imageSrc0UnsafeAt(srcPos)
-	rasterY := floor(custom.r) + 0.5
-	// Coordinates passed to imageSrc1* are expressed in image 0's texture
-	// space; Kage converts the origin internally for the second image.
-	raster := imageSrc1UnsafeAt(imageSrc0Origin() + vec2(0.5, rasterY))
-	return vec4(raster.rgb * glyph.a, raster.a * glyph.a)
-}
-`
+const tcbScrollShaderSource = scrolling.PlaneShaderSource
 
 type TCBDemo struct {
-	initialized bool
+	planes        *scrolling.Planes
+	planeRenderer *scrolling.PlaneRenderer
+	initialized   bool
 
 	rasters   *ebiten.Image
 	mountains *ebiten.Image
 	logo      *ebiten.Image
 	font      *ebiten.Image
 
-	logoCenter   *ebiten.Image
-	scrollShader *ebiten.Shader
+	logoCenter *ebiten.Image
 
-	fontTileRects [128]image.Rectangle
 	stripVertices []ebiten.Vertex
 	stripIndices  []uint16
 
 	bgSpeed [32]float64
 	bgPos   [32]float64
 
-	scrollForms       [8]ScrollForm
-	form              int
-	scrollX           float64
-	scrollText        string
-	scrollLetters     []byte
-	scrollFormChanges []int8
-	addi              int
-	sinAdder          float64
-	printPos          [30]PrintPos
+	scrollText string
 
 	logoSin  []float64
 	dcounter int
@@ -1117,21 +964,9 @@ func NewTCBDemo() *TCBDemo {
 		stripVertices: make([]ebiten.Vertex, 0, 64*4),
 		stripIndices:  make([]uint16, 0, 64*6),
 
-		addi:    0,
-		rotAdd:  1,
-		scrollX: 0,
+		rotAdd: 1,
 	}
 
-	d.scrollForms = [8]ScrollForm{
-		{0, 0, 0, 0, 55, 0, 0},
-		{0, 0, 0, 0, 55, 0, 2},
-		{0, 0, 0, 0, 55, 20, 2},
-		{200, 0, 0, 5, 55, 20, 2},
-		{200, 0, 4, 5, 55, 20, 2},
-		{200, -30, 4, 0, 55, 30, 2},
-		{200, 40, -4, 5, -70, 40, -4},
-		{150, 20, -3, 5, 55, 20, 2},
-	}
 	speeds := []float64{8, 7.5, 7, 6.5, 6, 5.5, 5, 4.5, 4, 3.5, 3, 2.5, 2, 1.5, 1, 0.5}
 	for i, speed := range speeds {
 		d.bgSpeed[i] = speed
@@ -1199,21 +1034,10 @@ func (d *TCBDemo) initScrollText() {
 }
 
 func (d *TCBDemo) preprocessScrollText() {
-	d.scrollLetters = make([]byte, len(d.scrollText))
-	d.scrollFormChanges = make([]int8, len(d.scrollText))
-	for i := range d.scrollFormChanges {
-		d.scrollFormChanges[i] = -1
-	}
-
-	for i := range d.scrollText {
-		letter := d.scrollText[i]
-		if letter == '^' && i+1 < len(d.scrollText) && d.scrollText[i+1] >= '0' && d.scrollText[i+1] <= '7' {
-			d.scrollFormChanges[i] = int8(d.scrollText[i+1] - '0')
-			letter = d.scrollText[(i-1+len(d.scrollText))%len(d.scrollText)]
-		} else if i >= 2 && d.scrollText[i-1] == '^' && letter >= '0' && letter <= '7' {
-			letter = d.scrollText[i-2]
-		}
-		d.scrollLetters[i] = letter
+	var err error
+	d.planes, err = scrolling.NewPlanes(scrolling.PlanesConfig{Slots: presets.TCBPlaneSlots(d.scrollText, 32), Forms: presets.TCBScrollForms(), Visible: 30, PhaseStep: .02, Projection: scrolling.PlaneProjection{Focal: 250, Depth: 150, OriginX: -450, CenterX: 160, CenterY: 100, XBias: -16, YBias: -14, VerticalOffset: -4}})
+	if err != nil {
+		panic(err)
 	}
 }
 
@@ -1256,10 +1080,8 @@ func (d *TCBDemo) Init() error {
 	} else {
 		d.font = ebiten.NewImageFromImage(img)
 	}
-	d.cacheFontTiles()
-	d.scrollShader, err = ebiten.NewShader([]byte(tcbScrollShaderSource))
-	if err != nil {
-		return fmt.Errorf("compile TCB scroller shader: %w", err)
+	if err = d.cacheFontTiles(); err != nil {
+		return err
 	}
 
 	if d.logo != nil {
@@ -1270,27 +1092,14 @@ func (d *TCBDemo) Init() error {
 	return nil
 }
 
-func (d *TCBDemo) cacheFontTiles() {
-	charMap := [6][10]rune{
-		{0, '!', 0, 0, 0, 0, 0, 0, '(', ')'},
-		{0, 0, ',', 0, '.', 0, 0, 0, 0, 0},
-		{0, 0, 0, 0, 0, 0, ':', ';', 0, 0},
-		{0, 0, 0, 'A', 'B', 'C', 'D', 'E', 'F', 'G'},
-		{'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q'},
-		{'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 0},
+func (d *TCBDemo) cacheFontTiles() error {
+	spec, _ := presets.FindFont("multiscreen-tcb")
+	metrics, err := spec.Build(d.font.Bounds())
+	if err != nil {
+		return err
 	}
-
-	for row := 0; row < 6; row++ {
-		for col := 0; col < 10; col++ {
-			ch := charMap[row][col]
-			if ch != 0 {
-				x := col * 32
-				y := row * 33
-				d.fontTileRects[ch] = image.Rect(x, y, x+32, y+33)
-			}
-		}
-	}
-
+	d.planeRenderer, err = scrolling.NewPlaneRenderer(scrolling.Face{Atlas: d.font, Metrics: metrics}, d.rasters)
+	return err
 }
 
 func (d *TCBDemo) Update() error {
@@ -1326,73 +1135,9 @@ func (d *TCBDemo) Update() error {
 	return nil
 }
 
-func (d *TCBDemo) scroll3D(scrollspeed float64) {
-	d.sinAdder += 0.02
-	activeForm := -1
-	previousCharIdx := -2
-	var zSin, zCos, ySin, yCos float64
-	var zStepSin, zStepCos, yStepSin, yStepCos float64
-
-	for i := range d.printPos {
-		charIdx := d.addi + i
-		if charIdx >= len(d.scrollText) {
-			charIdx -= len(d.scrollText)
-		}
-
-		letter := d.scrollLetters[charIdx]
-		if form := d.scrollFormChanges[charIdx]; form >= 0 {
-			d.form = int(form)
-		}
-		sf := d.scrollForms[d.form]
-
-		if activeForm != d.form || charIdx != previousCharIdx+1 {
-			if sf.zSize != 0 {
-				zSin, zCos = math.Sincos(sf.zAdd + float64(charIdx)*sf.zAmount*0.01 + d.sinAdder*sf.zSpeed)
-				zStepSin, zStepCos = math.Sincos(sf.zAmount * 0.01)
-			}
-			ySin, yCos = math.Sincos(1.5 + float64(charIdx)*sf.yAmount*0.01 + d.sinAdder*sf.ySpeed)
-			yStepSin, yStepCos = math.Sincos(sf.yAmount * 0.01)
-			activeForm = d.form
-		} else {
-			if sf.zSize != 0 {
-				zSin, zCos = stepSinCosForward(zSin, zCos, zStepSin, zStepCos)
-			}
-			ySin, yCos = stepSinCosForward(ySin, yCos, yStepSin, yStepCos)
-		}
-		previousCharIdx = charIdx
-
-		letterZ := sf.zSize*zSin + 150
-		letterY := sf.ySize*yCos - 4
-
-		scale := 250.0 / (250.0 + letterZ)
-
-		letterX := -450.0 + float64(i)*32 - d.scrollX
-		x2d := ((letterX - 16) * scale) + 160.0
-		y2d := ((letterY - 14) * scale) + 100.0
-
-		d.printPos[i] = PrintPos{x: x2d, y: y2d, z: scale, letter: letter}
-	}
-
-	// The list is tiny and fixed-size. Insertion sort avoids the reflection and
-	// heap escape caused by sort.Slice.
-	for i := 1; i < len(d.printPos); i++ {
-		item := d.printPos[i]
-		j := i
-		for j > 0 && d.printPos[j-1].z > item.z {
-			d.printPos[j] = d.printPos[j-1]
-			j--
-		}
-		d.printPos[j] = item
-	}
-
-	d.scrollX += scrollspeed
-
-	if d.scrollX >= 32 {
-		d.scrollX -= 32
-		d.addi++
-		if d.addi >= len(d.scrollText) {
-			d.addi = 0
-		}
+func (d *TCBDemo) scroll3D(speed float64) {
+	if err := d.planes.Step(speed); err != nil {
+		panic(err)
 	}
 }
 
@@ -1476,53 +1221,9 @@ func (d *TCBDemo) Draw(screen *ebiten.Image) {
 }
 
 func (d *TCBDemo) drawScroll3D(screen *ebiten.Image) {
-	d.stripVertices = d.stripVertices[:0]
-	d.stripIndices = d.stripIndices[:0]
-	for i := 0; i < 30; i++ {
-		if d.printPos[i].letter == 0 || d.printPos[i].z <= 0 {
-			continue
-		}
-
-		ch := rune(d.printPos[i].letter)
-		var tileRect image.Rectangle
-		if ch >= 0 && ch < rune(len(d.fontTileRects)) {
-			tileRect = d.fontTileRects[ch]
-		}
-		if tileRect.Empty() {
-			if ch >= 'a' && ch <= 'z' {
-				ch = ch - 'a' + 'A'
-				if ch < rune(len(d.fontTileRects)) {
-					tileRect = d.fontTileRects[ch]
-				}
-			}
-		}
-
-		if !tileRect.Empty() {
-			scale := float32(d.printPos[i].z)
-			localY := float32(d.printPos[i].y) - 16.5*scale
-			vertexBase := len(d.stripVertices)
-			d.stripVertices, d.stripIndices = appendTexturedQuad(
-				d.stripVertices, d.stripIndices,
-				64+2*(float32(d.printPos[i].x)-16*scale),
-				60+2*localY,
-				64*scale, 66*scale,
-				float32(tileRect.Min.X), float32(tileRect.Min.Y), 32, 33,
-			)
-			// DrawTrianglesShader exposes vertex colours as arbitrary interpolated
-			// values. Carry the old 320x200 destination Y so the fragment shader
-			// samples the exact raster scanline that SourceAtop used to apply.
-			d.stripVertices[vertexBase].ColorR = localY
-			d.stripVertices[vertexBase+1].ColorR = localY
-			d.stripVertices[vertexBase+2].ColorR = localY + 33*scale
-			d.stripVertices[vertexBase+3].ColorR = localY + 33*scale
-		}
-	}
-	if len(d.stripIndices) > 0 && d.scrollShader != nil {
-		scrollViewport := screen.SubImage(image.Rect(64, 60, 704, 460)).(*ebiten.Image)
-		op := &ebiten.DrawTrianglesShaderOptions{}
-		op.Images[0] = d.font
-		op.Images[1] = d.rasters
-		scrollViewport.DrawTrianglesShader(d.stripVertices, d.stripIndices, d.scrollShader, op)
+	if d.planeRenderer != nil {
+		view := screen.SubImage(image.Rect(64, 60, 704, 460)).(*ebiten.Image)
+		d.planeRenderer.Draw(view, d.planes.Points(), scrolling.PlaneDraw{OriginX: 64, OriginY: 60, ScaleX: 2, ScaleY: 2})
 	}
 }
 

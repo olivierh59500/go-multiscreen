@@ -191,100 +191,6 @@ func TestCocoScrollerFollowsWaveAcrossThreeFullMessages(t *testing.T) {
 	t.Logf("first full message loop reached near wave position %d", firstWrapWavePos)
 }
 
-func TestTCBScrollCalculationIsAllocationFree(t *testing.T) {
-	demo := &TCBDemo{
-		scrollForms: [8]ScrollForm{{ySize: 55}},
-		scrollText:  "ABCDEFGHIJKLMNOPQRSTUVWXYZ    ",
-	}
-	demo.preprocessScrollText()
-	allocs := testing.AllocsPerRun(1000, func() {
-		demo.scroll3D(4)
-	})
-	if allocs != 0 {
-		t.Fatalf("TCB scroll calculation allocated %.2f objects per call", allocs)
-	}
-}
-
-func TestTCBScrollRecurrenceMatchesDirectTrig(t *testing.T) {
-	demo := &TCBDemo{
-		scrollForms: [8]ScrollForm{
-			{0, 0, 0, 0, 55, 0, 0},
-			{0, 0, 0, 0, 55, 0, 2},
-			{0, 0, 0, 0, 55, 20, 2},
-			{200, 0, 0, 5, 55, 20, 2},
-			{200, 0, 4, 5, 55, 20, 2},
-			{200, -30, 4, 0, 55, 30, 2},
-			{200, 40, -4, 5, -70, 40, -4},
-			{150, 20, -3, 5, 55, 20, 2},
-		},
-		scrollText: "^0ABCDE^3FGHIJ^5KLMNO^6PQRST^7UVWXYZ          ",
-		scrollX:    13,
-		sinAdder:   2.75,
-	}
-	demo.preprocessScrollText()
-	want := *demo
-	referenceTCBScroll3D(&want, 4)
-	demo.scroll3D(4)
-
-	if demo.form != want.form || demo.addi != want.addi || demo.scrollX != want.scrollX || demo.sinAdder != want.sinAdder {
-		t.Fatalf("scroll state = (%d, %d, %g, %g), want (%d, %d, %g, %g)",
-			demo.form, demo.addi, demo.scrollX, demo.sinAdder,
-			want.form, want.addi, want.scrollX, want.sinAdder)
-	}
-	for i := range demo.printPos {
-		got, expected := demo.printPos[i], want.printPos[i]
-		if got.letter != expected.letter || math.Abs(got.x-expected.x) > 1e-10 ||
-			math.Abs(got.y-expected.y) > 1e-10 || math.Abs(got.z-expected.z) > 1e-12 {
-			t.Fatalf("print position %d = %+v, want %+v", i, got, expected)
-		}
-	}
-}
-
-func referenceTCBScroll3D(d *TCBDemo, scrollSpeed float64) {
-	d.sinAdder += 0.02
-	for i := range d.printPos {
-		charIdx := d.addi + i
-		if charIdx >= len(d.scrollText) {
-			charIdx -= len(d.scrollText)
-		}
-
-		letter := d.scrollLetters[charIdx]
-		if form := d.scrollFormChanges[charIdx]; form >= 0 {
-			d.form = int(form)
-		}
-		sf := d.scrollForms[d.form]
-		letterZ := sf.zSize*math.Sin(sf.zAdd+float64(charIdx)*sf.zAmount*0.01+d.sinAdder*sf.zSpeed) + 150
-		letterY := sf.ySize*math.Cos(1.5+float64(charIdx)*sf.yAmount*0.01+d.sinAdder*sf.ySpeed) - 4
-		scale := 250.0 / (250.0 + letterZ)
-		letterX := -450.0 + float64(i)*32 - d.scrollX
-		d.printPos[i] = PrintPos{
-			x:      ((letterX - 16) * scale) + 160,
-			y:      ((letterY - 14) * scale) + 100,
-			z:      scale,
-			letter: letter,
-		}
-	}
-
-	for i := 1; i < len(d.printPos); i++ {
-		item := d.printPos[i]
-		j := i
-		for j > 0 && d.printPos[j-1].z > item.z {
-			d.printPos[j] = d.printPos[j-1]
-			j--
-		}
-		d.printPos[j] = item
-	}
-
-	d.scrollX += scrollSpeed
-	if d.scrollX >= 32 {
-		d.scrollX -= 32
-		d.addi++
-		if d.addi >= len(d.scrollText) {
-			d.addi = 0
-		}
-	}
-}
-
 func TestAdvanceScroller4WrapsWithoutModulo(t *testing.T) {
 	text := []rune("AB")
 	if got := advanceScroller4(120, text); got != 124 {
@@ -372,17 +278,5 @@ func BenchmarkCubeRotationDirectTrig(b *testing.B) {
 			sz, cz := math.Sincos(cubes[i].angleZ)
 			cubeTrigSink = sx + cx + sy + cy + sz + cz
 		}
-	}
-}
-
-func BenchmarkTCBScrollCalculation(b *testing.B) {
-	demo := &TCBDemo{
-		scrollForms: [8]ScrollForm{{ySize: 55}},
-		scrollText:  "ABCDEFGHIJKLMNOPQRSTUVWXYZ    ",
-	}
-	demo.preprocessScrollText()
-	b.ReportAllocs()
-	for range b.N {
-		demo.scroll3D(4)
 	}
 }
