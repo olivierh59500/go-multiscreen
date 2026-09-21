@@ -18,8 +18,8 @@ import (
 	"sync"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/audio"
 	"github.com/hajimehoshi/ebiten/v2/vector"
+	audio "github.com/olivierh59500/democonstructionkit/sound/output"
 	"github.com/olivierh59500/ym-player/pkg/stsound"
 )
 
