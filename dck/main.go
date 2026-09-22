@@ -200,8 +200,6 @@ type PhenomenaDemo struct {
 
 	// Animation variables
 	t                float64
-	msgIndex         int
-	sliceCount       int
 	pause            bool
 	pauseTime        int
 	scrollSpeed      int
@@ -218,14 +216,9 @@ type PhenomenaDemo struct {
 	scrollerRotation float64
 
 	// Scroller data
-	scrollChars    [240]ScrollChar
-	scrollHead     int
-	scrollVertices []ebiten.Vertex
-	scrollIndices  []uint16
-	sineOffsets    [240]float64
+	sliceStream *scrolling.SliceStream
+	sineOffsets [240]float64
 }
-
-type ScrollChar = scrolling.DNASlice
 
 type GradientStop struct {
 	Color  color.RGBA
@@ -285,14 +278,13 @@ func NewPhenomenaDemo() *PhenomenaDemo {
 		rasterbarY:       -40,
 		direction:        1,
 		scrollerRotation: 0,
-		scrollVertices:   make([]ebiten.Vertex, 0, 240*4),
-		scrollIndices:    make([]uint16, 0, 240*6),
 	}
 
 	for i := range d.sineOffsets {
 		d.sineOffsets[i] = math.Sin(float64(i)*0.05) * 15
 	}
 
+	d.initSliceStream()
 	return d
 }
 
@@ -522,77 +514,45 @@ func (d *PhenomenaDemo) initCharacterFrames() {
 	d.cnvFrames = d.dnaFrames.Image
 }
 
-func (d *PhenomenaDemo) scrollMessage(speed int) {
-	for i := 0; i < speed; i++ {
-		ch := scrollMessage[d.msgIndex]
-		isCtrl := ch == '^' || ch == '#' || ch == '&' || ch == '%'
-
-		if isCtrl && d.sliceCount == 0 {
-			switch ch {
-			case '^':
-				d.pause = true
-				d.pauseTime = 275
-				d.rotSpeed = -1
-			case '&':
-				d.pause = true
-				d.pauseTime = 275
-				d.rotSpeed = 1
-			case '#':
-				d.pause = true
-				d.pauseTime = 250
-				d.rotSpeed = -1
-			case '%':
-				d.pause = true
-				d.pauseTime = 225
-				d.rotSpeed = -1
-			}
-			d.msgIndex++
-			if d.msgIndex >= len(scrollMessage) {
-				d.msgIndex = 90
-			}
-		} else {
-			d.shiftLeft()
-			d.addSliceOfChar(ch, d.sliceCount)
-
-			d.sliceCount++
-			if d.sliceCount > 7 {
-				d.sliceCount = 0
-				d.msgIndex++
-				if d.msgIndex >= len(scrollMessage) {
-					d.msgIndex = 90
-				}
-			}
+func (d *PhenomenaDemo) initSliceStream() {
+	tokens := make([]scrolling.SliceToken, 0, len(scrollMessage))
+	for _, ch := range scrollMessage {
+		if ch == '^' || ch == '#' || ch == '&' || ch == '%' {
+			tokens = append(tokens, scrolling.SliceToken{Control: string(ch)})
+			continue
 		}
+		glyph, ok := charToFontIndexPhe(ch)
+		if !ok {
+			glyph = 0
+		}
+		tokens = append(tokens, scrolling.SliceToken{Glyph: glyph, Width: 16})
+	}
+	var err error
+	d.sliceStream, err = scrolling.NewSliceStream(scrolling.SliceStreamConfig{Tokens: tokens, Capacity: len(d.sineOffsets), SliceWidth: 2, Repeat: true, LoopStart: 90})
+	if err != nil {
+		panic(err)
 	}
 }
 
-func (d *PhenomenaDemo) shiftLeft() {
-	d.scrollHead++
-	if d.scrollHead == len(d.scrollChars) {
-		d.scrollHead = 0
-	}
-}
-
-func (d *PhenomenaDemo) addSliceOfChar(ch byte, slice int) {
-	previous := d.scrollHead + len(d.scrollChars) - 2
-	if previous >= len(d.scrollChars) {
-		previous -= len(d.scrollChars)
-	}
-	tail := d.scrollHead + len(d.scrollChars) - 1
-	if tail >= len(d.scrollChars) {
-		tail -= len(d.scrollChars)
-	}
-	f := d.scrollChars[previous].Frame
-	glyph, ok := charToFontIndexPhe(rune(ch))
-	if !ok {
-		glyph = 0
-	}
-
-	d.scrollChars[tail] = ScrollChar{
-		Glyph: glyph,
-		Frame: f,
-		Slice: slice,
-	}
+func (d *PhenomenaDemo) scrollMessage(speed int) {
+	d.sliceStream.Step(speed, func(event scrolling.SliceControl) bool {
+		d.pause = true
+		switch event.Name {
+		case "^":
+			d.pauseTime = 275
+			d.rotSpeed = -1
+		case "&":
+			d.pauseTime = 275
+			d.rotSpeed = 1
+		case "#":
+			d.pauseTime = 250
+			d.rotSpeed = -1
+		case "%":
+			d.pauseTime = 225
+			d.rotSpeed = -1
+		}
+		return false
+	})
 }
 
 func (d *PhenomenaDemo) renderNextFrames(speed float64) {
@@ -603,20 +563,8 @@ func (d *PhenomenaDemo) renderNextFrames(speed float64) {
 	if d.scrollerRotation < 0 {
 		d.scrollerRotation += 30
 	}
-
-	for i := range d.scrollChars {
-		index := d.scrollHead + i
-		if index >= len(d.scrollChars) {
-			index -= len(d.scrollChars)
-		}
-		newFrame := d.scrollerRotation + d.sineOffsets[i]
-		if newFrame >= 30 {
-			newFrame -= 30
-		} else if newFrame < 0 {
-			newFrame += 30
-		}
-
-		d.scrollChars[index].Frame = int(newFrame)
+	if err := d.sliceStream.SetFrames(d.scrollerRotation, d.sineOffsets[:], 30); err != nil {
+		panic(err)
 	}
 }
 
@@ -845,7 +793,7 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 func (d *PhenomenaDemo) drawScroller(screen *ebiten.Image) {
 	t2 := d.t
 	ws, wc := math.Sincos(5*10.50 + d.t/6)
-	d.dnaFrames.DrawSlices(screen, d.scrollChars[:], d.scrollHead, scrolling.DNADrawConfig{SliceWidth: 2, ScaleX: 1.67, ScaleY: 1.875, OriginY: 195, Y: func(i int) float64 {
+	d.dnaFrames.DrawSlices(screen, d.sliceStream.Slices(), d.sliceStream.Head(), scrolling.DNADrawConfig{SliceWidth: 2, ScaleX: 1.67, ScaleY: 1.875, OriginY: 195, Y: func(i int) float64 {
 		y := 80.0
 		if t2 > 5*50-float64(i)*.0033 {
 			y = 80 * wc
@@ -1988,79 +1936,11 @@ func (d *CocoDemo) initCopperSin() {
 }
 
 func (d *CocoDemo) createCurves() {
-	for funcType := 0; funcType <= 7; funcType++ {
-		var step, progress float64
-
-		switch funcType {
-		case 0:
-			step, progress = 2.25, 0
-		case 1:
-			step, progress = 0.20, 140
-		case 2:
-			step, progress = 0.25, 175
-		case 3:
-			step, progress = 0.30, 210
-		case 4:
-			step, progress = 0.12, 175
-		case 5:
-			step, progress = 0.16, 210
-		case 6:
-			step, progress = 0.20, 245
-		case 7:
-			step, progress = 0.18, 0
-		}
-
-		local := []float64{}
-		decal := 0.0
-		previous := 0
-		maxAngle := 360.0
-		if funcType == 7 {
-			maxAngle = 720.0
-		}
-
-		for i := 0.0; i < maxAngle-step; i += step {
-			val := 0.0
-			rad := i * math.Pi / 180
-
-			switch funcType {
-			case 0:
-				val = 0
-			case 1:
-				val = 100 * math.Sin(rad)
-			case 2:
-				val = 110 * math.Sin(rad)
-			case 3:
-				val = 120 * math.Sin(rad)
-			case 4:
-				val = 100*math.Sin(rad) + 25.0*math.Sin(rad*10)
-			case 5:
-				val = 110*math.Sin(rad) + 27.5*math.Sin(rad*9)
-			case 6:
-				val = 120*math.Sin(rad) + 30.0*math.Sin(rad*8)
-			case 7:
-				dir := 1.0
-				if len(local)%2 == 1 {
-					dir = -1.0
-				}
-				amp := 12.0
-				if i < 160 {
-					amp *= i / 160
-				} else if (720 - 160) < i {
-					amp *= (720 - i) / 160
-				}
-				val = 90*math.Sin(rad) + dir*amp*math.Sin(rad*3)
-			}
-			local = append(local, val)
-		}
-
-		d.curves[funcType] = make([]int, len(local))
-		for i := 0; i < len(local); i++ {
-			nitem := -int(math.Floor(local[i] - decal))
-			d.curves[funcType][i] = nitem - previous
-			previous = nitem
-			decal += progress / float64(len(local))
-		}
+	curves, err := presets.RibbonCurves(1)
+	if err != nil {
+		panic(err)
 	}
+	d.curves = curves[:8]
 }
 
 func (d *CocoDemo) precalcPosition() {
@@ -2080,28 +1960,15 @@ func (d *CocoDemo) precalcMainWave() {
 		1, 1, 4, 1, 1, 2, 3, 2, 1, 5, 2, 1, 7,
 	}
 
-	count := 0
-	d.frontMainWave = []int{}
-
-	for _, waveType := range frontMainWaveTable {
-		wave := d.curves[waveType]
-		for _, val := range wave {
-			count += val
-			d.frontMainWave = append(d.frontMainWave, count)
-		}
+	var err error
+	d.frontMainWave, err = composite.JoinDeltaCurves(d.curves, frontMainWaveTable)
+	if err != nil {
+		panic(err)
 	}
 }
 
 func (d *CocoDemo) getSum3(arr []int, index, decal int) int {
-	n := len(arr)
-	if n == 0 {
-		return decal
-	}
-
-	maxVal := arr[n-1]
-	f := index / n
-	m := index % n
-	return decal + f*maxVal + arr[m]
+	return composite.CumulativeAt(arr, index, decal)
 }
 
 func (d *CocoDemo) getWave3(i int) int {
