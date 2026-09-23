@@ -7,6 +7,9 @@ import (
 	"testing"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/olivierh59500/democonstructionkit/effects"
+	"github.com/olivierh59500/democonstructionkit/geometry"
+	"github.com/olivierh59500/democonstructionkit/presets"
 )
 
 func TestTCBScrollShaderCompiles(t *testing.T) {
@@ -53,39 +56,18 @@ func TestPhenomenaCharsetIndex(t *testing.T) {
 }
 
 func TestCubeGeometryIsAllocationFree(t *testing.T) {
-	cube := Cube3D{angleX: 0.3, angleY: 0.7, angleZ: 1.1, size: 40}
-	vertices := make([]ebiten.Vertex, 0, len(cubeFaces3)*20)
-	indices := make([]uint16, 0, len(cubeFaces3)*30)
-
-	vertices, indices = cube.appendGeometry(vertices, indices, 400, 300)
-	if got, want := len(vertices), len(cubeFaces3)*20; got != want {
-		t.Fatalf("vertex count = %d, want %d", got, want)
+	cube, err := effects.NewSolidCube(presets.MultiscreenCocoCube(40))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got, want := len(indices), len(cubeFaces3)*30; got != want {
-		t.Fatalf("index count = %d, want %d", got, want)
+	defer cube.Close()
+	cube.Rotation = geometry.Vec3{X: .3, Y: .7, Z: 1.1}
+	vertices, indices := cube.Geometry(400, 300)
+	if len(vertices) != 120 || len(indices) != 180 {
+		t.Fatalf("unexpected geometry size %d/%d", len(vertices), len(indices))
 	}
-
-	allocs := testing.AllocsPerRun(1000, func() {
-		vertices, indices = cube.appendGeometry(vertices[:0], indices[:0], 400, 300)
-	})
-	if allocs != 0 {
-		t.Fatalf("cube geometry allocated %.2f objects per call", allocs)
-	}
-}
-
-func TestCubeRotationRecurrence(t *testing.T) {
-	cube := Cube3D{angleX: 0.3, angleY: 0.7, angleZ: 1.1, size: 40}
-	const dx, dy, dz = 0.023, 0.037, 0.011
-	for i := 0; i < 10_000; i++ {
-		cube.Rotate(dx, dy, dz)
-		wantSinX, wantCosX := math.Sincos(cube.angleX)
-		wantSinY, wantCosY := math.Sincos(cube.angleY)
-		wantSinZ, wantCosZ := math.Sincos(cube.angleZ)
-		if math.Abs(cube.sinX-wantSinX) > 1e-11 || math.Abs(cube.cosX-wantCosX) > 1e-11 ||
-			math.Abs(cube.sinY-wantSinY) > 1e-11 || math.Abs(cube.cosY-wantCosY) > 1e-11 ||
-			math.Abs(cube.sinZ-wantSinZ) > 1e-11 || math.Abs(cube.cosZ-wantCosZ) > 1e-11 {
-			t.Fatalf("rotation recurrence drift at step %d", i+1)
-		}
+	if n := testing.AllocsPerRun(1000, func() { cube.Geometry(400, 300) }); n != 0 {
+		t.Fatalf("geometry allocated %g objects", n)
 	}
 }
 
@@ -224,59 +206,14 @@ func TestSinCosRecurrence(t *testing.T) {
 }
 
 func BenchmarkCubeGeometry(b *testing.B) {
-	cube := Cube3D{angleX: 0.3, angleY: 0.7, angleZ: 1.1, size: 40}
-	vertices := make([]ebiten.Vertex, 0, len(cubeFaces3)*20)
-	indices := make([]uint16, 0, len(cubeFaces3)*30)
+	cube, err := effects.NewSolidCube(presets.MultiscreenCocoCube(40))
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer cube.Close()
+	cube.Rotation = geometry.Vec3{X: .3, Y: .7, Z: 1.1}
 	b.ReportAllocs()
-	for range b.N {
-		vertices, indices = cube.appendGeometry(vertices[:0], indices[:0], 400, 300)
-	}
-}
-
-var cubeTrigSink float64
-
-func BenchmarkCubeRotationRecurrence(b *testing.B) {
-	var cubes [nbCubes3]Cube3D
-	for i := range cubes {
-		cubes[i] = Cube3D{
-			angleX: float64(i) * 0.3,
-			angleY: float64(i) * 0.2,
-			angleZ: float64(i) * 0.1,
-		}
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		for i := range cubes {
-			dx := 0.02 * (1 + float64(i)*0.1)
-			dy := 0.03 * (1 + float64(i)*0.15)
-			dz := 0.01 * (1 + float64(i)*0.05)
-			cubes[i].Rotate(dx, dy, dz)
-			cubeTrigSink = cubes[i].sinX + cubes[i].cosX + cubes[i].sinY + cubes[i].cosY + cubes[i].sinZ + cubes[i].cosZ
-		}
-	}
-}
-
-func BenchmarkCubeRotationDirectTrig(b *testing.B) {
-	var cubes [nbCubes3]Cube3D
-	for i := range cubes {
-		cubes[i] = Cube3D{
-			angleX: float64(i) * 0.3,
-			angleY: float64(i) * 0.2,
-			angleZ: float64(i) * 0.1,
-		}
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		for i := range cubes {
-			cubes[i].angleX += 0.02 * (1 + float64(i)*0.1)
-			cubes[i].angleY += 0.03 * (1 + float64(i)*0.15)
-			cubes[i].angleZ += 0.01 * (1 + float64(i)*0.05)
-			sx, cx := math.Sincos(cubes[i].angleX)
-			sy, cy := math.Sincos(cubes[i].angleY)
-			sz, cz := math.Sincos(cubes[i].angleZ)
-			cubeTrigSink = sx + cx + sy + cy + sz + cz
-		}
+	for b.Loop() {
+		cube.Geometry(400, 300)
 	}
 }

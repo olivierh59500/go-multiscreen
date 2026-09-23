@@ -8,6 +8,8 @@ import (
 	originalassets "multiscreen-mega-demo"
 
 	"github.com/olivierh59500/democonstructionkit/composite"
+	"github.com/olivierh59500/democonstructionkit/effects"
+	"github.com/olivierh59500/democonstructionkit/geometry"
 	"github.com/olivierh59500/democonstructionkit/motion"
 	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/scrolling"
@@ -106,6 +108,7 @@ var demo1LogoData = originalassets.
 var demo1PhotonData = originalassets.DCKAssetDemo1PhotonData()
 
 type PhenomenaDemo struct {
+	fontAtlas *scrolling.Atlas
 	dnaFrames *scrolling.DNAFrames
 	// Demo state
 	state       int
@@ -175,7 +178,7 @@ var (
 	}
 )
 
-const charsetPhenomena = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!'?/,.-@"
+const charsetPhenomena = presets.PhenomenaAlphabet
 
 var phenomenaWaveSinStep, phenomenaWaveCosStep = math.Sincos(1.0 / 36.0)
 
@@ -239,6 +242,10 @@ func (d *PhenomenaDemo) Init() error {
 		return err
 	}
 	d.imgFont = ebiten.NewImageFromImage(img)
+	d.fontAtlas, err = presets.FontAtlas("multiscreen-phenomena", d.imgFont)
+	if err != nil {
+		return err
+	}
 
 	img, _, err = image.Decode(bytes.NewReader(demo1LogoData))
 	if err != nil {
@@ -310,16 +317,12 @@ func (d *PhenomenaDemo) makeIntroText(mode string, backColor color.Color, texts 
 	for _, t := range texts {
 		x := 48
 		for _, ch := range t.Text {
-			idx, found := charToFontIndexPhe(ch)
+			subImg, _, found := d.fontAtlas.Glyph(ch)
 
-			if found && idx >= 0 {
+			if found {
 				op := &ebiten.DrawImageOptions{}
 				op.GeoM.Scale(2, 2)
 				op.GeoM.Translate(float64(x), float64(t.Y))
-
-				sx := idx * 16
-				sy := 0
-				subImg := d.imgFont.SubImage(image.Rect(sx, sy, sx+16, sy+26)).(*ebiten.Image)
 
 				if mode == "xor" {
 					op.ColorM.Scale(-1, -1, -1, 1)
@@ -335,37 +338,13 @@ func (d *PhenomenaDemo) makeIntroText(mode string, backColor color.Color, texts 
 	return img
 }
 
-func charToFontIndexPhe(ch rune) (int, bool) {
-	if ch >= 'a' && ch <= 'z' {
-		ch -= 'a' - 'A'
+var charToFontIndexPhe = func() func(rune) (int, bool) {
+	lookup, err := presets.TileLookup("multiscreen-phenomena", false)
+	if err != nil {
+		panic(err)
 	}
-	switch {
-	case ch == ' ':
-		return 0, true
-	case ch >= 'A' && ch <= 'Z':
-		return int(ch-'A') + 1, true
-	case ch >= '0' && ch <= '9':
-		return int(ch-'0') + 27, true
-	case ch == '!':
-		return 37, true
-	case ch == '\'':
-		return 38, true
-	case ch == '?':
-		return 39, true
-	case ch == '/':
-		return 40, true
-	case ch == ',':
-		return 41, true
-	case ch == '.':
-		return 42, true
-	case ch == '-':
-		return 43, true
-	case ch == '@':
-		return 44, true
-	default:
-		return 0, false
-	}
-}
+	return lookup
+}()
 
 func createGradient(width, height int, stops []GradientStop) *ebiten.Image {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
@@ -429,11 +408,10 @@ func (d *PhenomenaDemo) initCharacterFrames() {
 	defer core.Deallocate()
 	defer front.Deallocate()
 	defer back.Deallocate()
-	glyphs := make([]*ebiten.Image, len(charsetPhenomena))
-	for i := range glyphs {
-		glyphs[i] = d.imgFont.SubImage(image.Rect(i*16, 0, (i+1)*16, 26)).(*ebiten.Image)
+	glyphs, err := scrolling.GridImages(d.imgFont, image.Pt(16, 26), len(charsetPhenomena), len(charsetPhenomena))
+	if err != nil {
+		panic(err)
 	}
-	var err error
 	d.dnaFrames, err = scrolling.NewDNAFrames(glyphs, scrolling.DNAFrameConfig{Frames: 30, Height: 33, Step: 2.25, Front: front, Back: back, Core: core, CoreY: 12})
 	if err != nil {
 		panic(err)
@@ -1121,99 +1099,8 @@ const (
 		"GREETINGS TO ALL DEMOSCENE LOVERS! " + cocoScrollPadding3 + cocoScrollPadding3
 )
 
-type Cube3D struct {
-	angleX float64
-	angleY float64
-	angleZ float64
-	size   float64
-
-	sinX float64
-	cosX float64
-	sinY float64
-	cosY float64
-	sinZ float64
-	cosZ float64
-
-	stepDX   float64
-	stepDY   float64
-	stepDZ   float64
-	stepSinX float64
-	stepCosX float64
-	stepSinY float64
-	stepCosY float64
-	stepSinZ float64
-	stepCosZ float64
-
-	rotationCount uint16
-	trigReady     bool
-	stepReady     bool
-}
-
-func (c *Cube3D) Rotate(dx, dy, dz float64) {
-	c.ensureTrig()
-	if !c.stepReady || dx != c.stepDX || dy != c.stepDY || dz != c.stepDZ {
-		c.stepDX, c.stepDY, c.stepDZ = dx, dy, dz
-		c.stepSinX, c.stepCosX = math.Sincos(dx)
-		c.stepSinY, c.stepCosY = math.Sincos(dy)
-		c.stepSinZ, c.stepCosZ = math.Sincos(dz)
-		c.stepReady = true
-	}
-
-	c.angleX += dx
-	c.angleY += dy
-	c.angleZ += dz
-	c.sinX, c.cosX = stepSinCosForward(c.sinX, c.cosX, c.stepSinX, c.stepCosX)
-	c.sinY, c.cosY = stepSinCosForward(c.sinY, c.cosY, c.stepSinY, c.stepCosY)
-	c.sinZ, c.cosZ = stepSinCosForward(c.sinZ, c.cosZ, c.stepSinZ, c.stepCosZ)
-
-	c.rotationCount++
-	if c.rotationCount == 1024 {
-		c.angleX = math.Mod(c.angleX, 2*math.Pi)
-		c.angleY = math.Mod(c.angleY, 2*math.Pi)
-		c.angleZ = math.Mod(c.angleZ, 2*math.Pi)
-		c.rotationCount = 0
-		c.trigReady = false
-		c.ensureTrig()
-	}
-}
-
-func (c *Cube3D) ensureTrig() {
-	if c.trigReady {
-		return
-	}
-	c.sinX, c.cosX = math.Sincos(c.angleX)
-	c.sinY, c.cosY = math.Sincos(c.angleY)
-	c.sinZ, c.cosZ = math.Sincos(c.angleZ)
-	c.trigReady = true
-}
-
-type Letter3 struct {
-	x, y  int
-	width int
-}
-
 type DMASprite3 struct {
 	x, y float64
-}
-
-type faceDepth3 struct {
-	index int
-	depth float64
-}
-
-var cubeCorners3 = [8][3]float64{
-	{-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
-	{-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1},
-}
-
-var cubeFaces3 = [6][4]int{
-	{0, 1, 2, 3}, {4, 5, 6, 7}, {0, 1, 5, 4},
-	{2, 3, 7, 6}, {0, 3, 7, 4}, {1, 2, 6, 5},
-}
-
-var cubeFaceColors3 = [6]color.RGBA{
-	{255, 140, 0, 255}, {255, 165, 50, 255}, {255, 180, 80, 255},
-	{255, 120, 0, 255}, {255, 150, 30, 255}, {255, 200, 100, 255},
 }
 
 var (
@@ -1237,20 +1124,17 @@ type CocoDemo struct {
 	fontImg    *ebiten.Image
 
 	scrollSurf *ebiten.Image
-	solidImage *ebiten.Image
+	cubeBatch  *effects.SolidCubeBatch
 
-	letterData [128]Letter3
-	fontTiles  [128]*ebiten.Image
+	fontAtlas *scrolling.Atlas
 
 	// 3D Cubes
-	cubes         [nbCubes3]Cube3D
+	cubes         [nbCubes3]*effects.SolidCube
 	spritePos     [nbCubes3]float64
 	spritePathSin [nbCubes3]float64
 	spritePathCos [nbCubes3]float64
 	spriteBobSin  [nbCubes3]float64
 	spriteBobCos  [nbCubes3]float64
-	cubeVertices  []ebiten.Vertex
-	cubeIndices   []uint16
 
 	// DMA logo sprites (16 logos in 4x4 grid)
 	dmaSprites [nbDMALogos3]DMASprite3
@@ -1292,26 +1176,22 @@ type CocoDemo struct {
 func NewCocoDemo() *CocoDemo {
 	d := &CocoDemo{
 		scrollSurf:     ebiten.NewImage(int(float64(demoWidth)*scrollSurfWidthFactor3), int(float64(fontHeight3)*scrollScaleFactor3)),
-		solidImage:     ebiten.NewImage(3, 3),
-		cubeVertices:   make([]ebiten.Vertex, 0, nbCubes3*len(cubeFaces3)*20),
-		cubeIndices:    make([]uint16, 0, nbCubes3*len(cubeFaces3)*30),
+		cubeBatch:      effects.NewSolidCubeBatch(nbCubes3),
 		scrollVertices: make([]ebiten.Vertex, 0, ((demoHeight-72)/scrollScaleInt3)*8),
 		scrollIndices:  make([]uint16, 0, ((demoHeight-72)/scrollScaleInt3)*12),
 		logoX:          0.5,
 		lastTextOffset: -1,
 		scrollText:     cocoScrollText3,
 	}
-	d.solidImage.Fill(color.White)
 
 	// Init 3D cubes
 	for i := 0; i < nbCubes3; i++ {
-		d.cubes[i] = Cube3D{
-			angleX: float64(i) * 0.3,
-			angleY: float64(i) * 0.2,
-			angleZ: float64(i) * 0.1,
-			size:   40,
+		var err error
+		d.cubes[i], err = effects.NewSolidCube(presets.MultiscreenCocoCube(40))
+		if err != nil {
+			panic(err)
 		}
-		d.cubes[i].ensureTrig()
+		d.cubes[i].Rotation = geometry.Vec3{X: float64(i) * .3, Y: float64(i) * .2, Z: float64(i) * .1}
 		d.spritePos[i] = float64(0.15) * float64(i+1)
 		d.spritePathSin[i], d.spritePathCos[i] = math.Sincos(d.spritePos[i])
 		d.spriteBobSin[i], d.spriteBobCos[i] = math.Sincos(d.spritePos[i] * 2.5)
@@ -1385,38 +1265,10 @@ func (d *CocoDemo) Init() error {
 }
 
 func (d *CocoDemo) initFontData3() {
-	data := [...]struct {
-		char  byte
-		x, y  int
-		width int
-	}{
-		{' ', 0, 0, 32}, {'!', 48, 0, 16}, {'"', 96, 0, 32},
-		{'\'', 336, 0, 16}, {'(', 384, 0, 32}, {')', 432, 0, 32},
-		{'+', 48, 36, 48}, {',', 96, 36, 16}, {'-', 144, 36, 32},
-		{'.', 192, 36, 16}, {'0', 288, 36, 48}, {'1', 336, 36, 48},
-		{'2', 384, 36, 48}, {'3', 432, 36, 48}, {'4', 0, 72, 48},
-		{'5', 48, 72, 48}, {'6', 96, 72, 48}, {'7', 144, 72, 48},
-		{'8', 192, 72, 48}, {'9', 240, 72, 48}, {':', 288, 72, 16},
-		{';', 336, 72, 16}, {'<', 384, 72, 32}, {'=', 432, 72, 32},
-		{'>', 0, 108, 32}, {'?', 48, 108, 48}, {'A', 144, 108, 48},
-		{'B', 192, 108, 48}, {'C', 240, 108, 48}, {'D', 288, 108, 48},
-		{'E', 336, 108, 48}, {'F', 384, 108, 48}, {'G', 432, 108, 48},
-		{'H', 0, 144, 48}, {'I', 48, 144, 16}, {'J', 96, 144, 48},
-		{'K', 144, 144, 48}, {'L', 192, 144, 48}, {'M', 240, 144, 48},
-		{'N', 288, 144, 48}, {'O', 336, 144, 48}, {'P', 384, 144, 48},
-		{'Q', 432, 144, 48}, {'R', 0, 180, 48}, {'S', 48, 180, 48},
-		{'T', 96, 180, 48}, {'U', 144, 180, 48}, {'V', 192, 180, 48},
-		{'W', 240, 180, 48}, {'X', 288, 180, 48}, {'Y', 336, 180, 48},
-		{'Z', 384, 180, 48},
-	}
-
-	for _, dd := range data {
-		d.letterData[dd.char] = Letter3{x: dd.x, y: dd.y, width: dd.width}
-		if d.fontImg != nil {
-			d.fontTiles[dd.char] = d.fontImg.SubImage(
-				image.Rect(dd.x, dd.y, dd.x+dd.width, dd.y+fontHeight3),
-			).(*ebiten.Image)
-		}
+	var err error
+	d.fontAtlas, err = presets.FontAtlas("multiscreen-coco", d.fontImg)
+	if err != nil {
+		panic(err)
 	}
 }
 
@@ -1644,9 +1496,9 @@ func (d *CocoDemo) displayText3(letterOffset int) {
 		glyphs := make([]scrolling.Glyph, len(d.scrollText))
 		for i := range d.scrollText {
 			r := d.scrollText[i]
-			letter := d.letterData[r]
-			if letter.width > 0 {
-				glyphs[i] = scrolling.Glyph{Image: d.fontTiles[r], Advance: float64(letter.width)}
+			glyphImage, letter, ok := d.fontAtlas.ExactGlyph(rune(r))
+			if ok {
+				glyphs[i] = scrolling.Glyph{Image: glyphImage, Advance: letter.Advance}
 			} else {
 				glyphs[i] = scrolling.Glyph{Advance: 32}
 			}
@@ -1665,129 +1517,13 @@ func (d *CocoDemo) displayText3(letterOffset int) {
 }
 
 func (d *CocoDemo) draw3DCubes3(dst *ebiten.Image) {
-	d.cubeVertices = d.cubeVertices[:0]
-	d.cubeIndices = d.cubeIndices[:0]
+	d.cubeBatch.Reset()
 	for i := 0; i < nbCubes3; i++ {
 		xPos := float64((demoWidth-40)/2) + float64((demoWidth-40)/2)*d.spritePathSin[i]
 		yPos := float64(demoHeight)/2 + 84*d.spriteBobCos[i]
-		d.cubeVertices, d.cubeIndices = d.cubes[i].appendGeometry(d.cubeVertices, d.cubeIndices, xPos, yPos)
+		d.cubeBatch.Add(d.cubes[i], xPos, yPos)
 	}
-	if len(d.cubeIndices) > 0 {
-		dst.DrawTriangles(d.cubeVertices, d.cubeIndices, d.solidImage, nil)
-	}
-}
-
-func (c *Cube3D) appendGeometry(vertices []ebiten.Vertex, indices []uint16, centerX, centerY float64) ([]ebiten.Vertex, []uint16) {
-	c.ensureTrig()
-	sinX, cosX := c.sinX, c.cosX
-	sinY, cosY := c.sinY, c.cosY
-	sinZ, cosZ := c.sinZ, c.cosZ
-	half := c.size / 2
-
-	var rotated [8][3]float64
-	var projected [8][2]float32
-	for i, corner := range cubeCorners3 {
-		x, y, z := corner[0]*half, corner[1]*half, corner[2]*half
-
-		y1 := y*cosX - z*sinX
-		z1 := y*sinX + z*cosX
-		y, z = y1, z1
-
-		x1 := x*cosY + z*sinY
-		z2 := -x*sinY + z*cosY
-		x, z = x1, z2
-
-		x2 := x*cosZ - y*sinZ
-		y2 := x*sinZ + y*cosZ
-		x, y = x2, y2
-
-		rotated[i] = [3]float64{x, y, z}
-		x2d, y2d := project3D3(x, y, z)
-		projected[i] = [2]float32{float32(centerX + x2d), float32(centerY + y2d)}
-	}
-
-	var depths [6]faceDepth3
-	for i, face := range cubeFaces3 {
-		centerZ := 0.0
-		for _, vi := range face {
-			centerZ += rotated[vi][2]
-		}
-		depths[i] = faceDepth3{i, centerZ / 4}
-	}
-
-	for i := 1; i < len(depths); i++ {
-		item := depths[i]
-		j := i
-		for j > 0 && depths[j-1].depth > item.depth {
-			depths[j] = depths[j-1]
-			j--
-		}
-		depths[j] = item
-	}
-
-	for _, fd := range depths {
-		face := cubeFaces3[fd.index]
-		faceColor := cubeFaceColors3[fd.index]
-		points := [4][2]float32{
-			projected[face[0]], projected[face[1]], projected[face[2]], projected[face[3]],
-		}
-
-		vertices, indices = appendSolidQuad3(vertices, indices, points, faceColor)
-
-		edgeColor := color.RGBA{
-			uint8(faceColor.R * 3 / 4),
-			uint8(faceColor.G * 3 / 4),
-			uint8(faceColor.B * 3 / 4),
-			255,
-		}
-		for i := 0; i < 4; i++ {
-			j := (i + 1) % 4
-			vertices, indices = appendSolidLine3(vertices, indices, points[i], points[j], 1, edgeColor)
-		}
-	}
-	return vertices, indices
-}
-
-func project3D3(x, y, z float64) (float64, float64) {
-	perspective := 200.0
-	factor := perspective / (perspective + z)
-	return x * factor, y * factor
-}
-
-func solidVertex3(point [2]float32, clr color.RGBA) ebiten.Vertex {
-	const inv255 = 1.0 / 255.0
-	return ebiten.Vertex{
-		DstX: point[0], DstY: point[1], SrcX: 1, SrcY: 1,
-		ColorR: float32(clr.R) * inv255, ColorG: float32(clr.G) * inv255,
-		ColorB: float32(clr.B) * inv255, ColorA: float32(clr.A) * inv255,
-	}
-}
-
-func appendSolidQuad3(vertices []ebiten.Vertex, indices []uint16, points [4][2]float32, clr color.RGBA) ([]ebiten.Vertex, []uint16) {
-	base := uint16(len(vertices))
-	for _, point := range points {
-		vertices = append(vertices, solidVertex3(point, clr))
-	}
-	indices = append(indices, base, base+1, base+2, base, base+2, base+3)
-	return vertices, indices
-}
-
-func appendSolidLine3(vertices []ebiten.Vertex, indices []uint16, start, end [2]float32, width float32, clr color.RGBA) ([]ebiten.Vertex, []uint16) {
-	dx := end[0] - start[0]
-	dy := end[1] - start[1]
-	length := float32(math.Sqrt(float64(dx*dx + dy*dy)))
-	if length == 0 {
-		return vertices, indices
-	}
-	halfWidth := width / (2 * length)
-	ox, oy := -dy*halfWidth, dx*halfWidth
-	points := [4][2]float32{
-		{start[0] + ox, start[1] + oy},
-		{end[0] + ox, end[1] + oy},
-		{end[0] - ox, end[1] - oy},
-		{start[0] - ox, start[1] - oy},
-	}
-	return appendSolidQuad3(vertices, indices, points, clr)
+	d.cubeBatch.Draw(dst)
 }
 
 func (d *CocoDemo) drawTitleWithCopperbars3(dst *ebiten.Image) {
@@ -1861,8 +1597,8 @@ func (d *CocoDemo) precalcPosition() {
 	d.position = make([]int, 0, len(d.scrollText))
 
 	for i := 0; i < len(d.scrollText); i++ {
-		if letter := d.letterData[d.scrollText[i]]; letter.width > 0 {
-			count += int(float64(letter.width) * scrollScaleFactor3)
+		if _, letter, ok := d.fontAtlas.ExactGlyph(rune(d.scrollText[i])); ok {
+			count += int(float64(int(letter.Advance)) * scrollScaleFactor3)
 			d.position = append(d.position, count)
 		}
 	}
@@ -1970,7 +1706,7 @@ type VivaDemo struct {
 	rasterImg *ebiten.Image
 	tileImg   *ebiten.Image
 	fontImg   *ebiten.Image
-	fontTiles [59]*ebiten.Image
+	fontAtlas *scrolling.Atlas
 
 	logoX    float64
 	rasterY1 float64
@@ -2049,15 +1785,9 @@ func (d *VivaDemo) Init() error {
 		log.Printf("Error loading font: %v", err)
 	} else {
 		d.fontImg = ebiten.NewImageFromImage(img)
-		for fontIndex := range d.fontTiles {
-			const cols = 10
-			srcX := (fontIndex % cols) * fontCharWidth4
-			srcY := (fontIndex / cols) * fontCharHeight4
-			if srcX+fontCharWidth4 <= d.fontImg.Bounds().Dx() && srcY+fontCharHeight4 <= d.fontImg.Bounds().Dy() {
-				d.fontTiles[fontIndex] = d.fontImg.SubImage(
-					image.Rect(srcX, srcY, srcX+fontCharWidth4, srcY+fontCharHeight4),
-				).(*ebiten.Image)
-			}
+		d.fontAtlas, err = presets.FontAtlas("multiscreen-viva", d.fontImg)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -2065,24 +1795,13 @@ func (d *VivaDemo) Init() error {
 	return nil
 }
 
-func mapCharToFont4(charCode int) int {
-	if charCode == ' ' {
-		return 0
+var mapCharToFont4 = func() func(int) int {
+	lookup, err := presets.TileLookup("multiscreen-viva", false)
+	if err != nil {
+		panic(err)
 	}
-
-	if charCode >= 'a' && charCode <= 'z' {
-		charCode = charCode - 32
-	}
-
-	switch {
-	case charCode >= 33 && charCode <= 64:
-		return charCode - 32
-	case charCode >= 65 && charCode <= 90:
-		return (charCode - 65) + 33
-	default:
-		return 0
-	}
-}
+	return func(ch int) int { index, _ := lookup(rune(ch)); return index }
+}()
 
 func stepSinCosBackward(sinValue, cosValue, sinStep, cosStep float64) (float64, float64) {
 	return sinValue*cosStep - cosValue*sinStep, cosValue*cosStep + sinValue*sinStep
@@ -2100,9 +1819,10 @@ func (d *VivaDemo) drawScroller(dst *ebiten.Image, text []rune, scrollX float64,
 	if program == nil {
 		images := make([]*ebiten.Image, len(text))
 		for i, r := range text {
-			index := mapCharToFont4(int(r))
-			if index >= 0 && index < len(d.fontTiles) {
-				images[i] = d.fontTiles[index]
+			var ok bool
+			images[i], _, ok = d.fontAtlas.Glyph(r)
+			if !ok {
+				images[i], _, _ = d.fontAtlas.Glyph(' ')
 			}
 		}
 		var err error
