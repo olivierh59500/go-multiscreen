@@ -6,8 +6,8 @@ Run the original with `go run ./cmd/multiscreen` and this version with `go run .
 
 The choreography and assets remain in this repository. Reusable rendering and
 effects come from the published `github.com/olivierh59500/democonstructionkit`
-module pinned in `go.mod`. Go downloads the dependencies automatically, including
-`github.com/olivierh59500/ym-player v1.0.0` for YM playback.
+module pinned in `go.mod`. Music is opened with `sound.Open`; DCK selects the decoder from the asset and
+provides the configured stereo PCM format. The demo keeps its playback level and loop settings.
 
 ## Shared component effects
 

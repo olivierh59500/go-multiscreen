@@ -1,26 +1,26 @@
 package multiscreen
 
-import originalassets "multiscreen-mega-demo"
-
 import (
 	"bytes"
-	"github.com/olivierh59500/democonstructionkit/presets"
-
 	"fmt"
-	"github.com/olivierh59500/democonstructionkit/composite"
-	"github.com/olivierh59500/democonstructionkit/scrolling"
 	"image"
 	"image/color"
+	originalassets "multiscreen-mega-demo"
+
+	"github.com/olivierh59500/democonstructionkit/composite"
+	"github.com/olivierh59500/democonstructionkit/motion"
+	"github.com/olivierh59500/democonstructionkit/presets"
+	"github.com/olivierh59500/democonstructionkit/scrolling"
+	"github.com/olivierh59500/democonstructionkit/sound"
+
 	_ "image/png"
-	"io"
 	"log"
 	"math"
-	"sync"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
+
 	audio "github.com/olivierh59500/democonstructionkit/sound/output"
-	"github.com/olivierh59500/ym-player/pkg/stsound"
 )
 
 const (
@@ -82,79 +82,6 @@ const (
 	StateZoomOut
 	StateLoop
 )
-
-// YMPlayer wraps the YM player for Ebiten audio
-type YMPlayer struct {
-	player *stsound.StSound
-	buffer []int16
-	mutex  sync.Mutex
-	loop   bool
-}
-
-func NewYMPlayer(data []byte, sampleRate int, loop bool) (*YMPlayer, error) {
-	player := stsound.CreateWithRate(sampleRate)
-
-	if err := player.LoadMemory(data); err != nil {
-		player.Destroy()
-		return nil, fmt.Errorf("failed to load YM data: %w", err)
-	}
-
-	player.SetLoopMode(loop)
-
-	return &YMPlayer{
-		player: player,
-		buffer: make([]int16, 4096),
-		loop:   loop,
-	}, nil
-}
-
-func (y *YMPlayer) Read(p []byte) (n int, err error) {
-	y.mutex.Lock()
-	defer y.mutex.Unlock()
-
-	samplesNeeded := len(p) / 4
-	processed := 0
-	for processed < samplesNeeded {
-		chunkSize := samplesNeeded - processed
-		if chunkSize > len(y.buffer) {
-			chunkSize = len(y.buffer)
-		}
-
-		if !y.player.Compute(y.buffer[:chunkSize], chunkSize) {
-			if !y.loop {
-				clear(p[processed*4 : samplesNeeded*4])
-				err = io.EOF
-				break
-			}
-		}
-
-		for i := 0; i < chunkSize; i++ {
-			// The demo volume is fixed at 50%. Integer division has the same
-			// truncation-toward-zero result as the former float64 conversion.
-			sample := y.buffer[i] / 2
-			offset := (processed + i) * 4
-			p[offset] = byte(sample)
-			p[offset+1] = byte(sample >> 8)
-			p[offset+2] = byte(sample)
-			p[offset+3] = byte(sample >> 8)
-		}
-
-		processed += chunkSize
-	}
-
-	return samplesNeeded * 4, err
-}
-
-func (y *YMPlayer) Close() error {
-	y.mutex.Lock()
-	defer y.mutex.Unlock()
-
-	if y.player != nil {
-		y.player.Destroy()
-		y.player = nil
-	}
-	return nil
-}
 
 // Cubic ease in-out
 func easeInOutCubic(t float64) float64 {
@@ -929,22 +856,10 @@ func NewTCBDemo() *TCBDemo {
 }
 
 func (d *TCBDemo) initLogoSin() {
-	d.logoSin = make([]float64, 0, 40+(160*5+4)+(160*5+10)+160)
-
-	for i := 0; i < 40; i++ {
-		d.logoSin = append(d.logoSin, 0)
-	}
-
-	for i := 0; i < 160*5+4; i++ {
-		d.logoSin = append(d.logoSin, 8*math.Sin(float64(i)*0.05-2))
-	}
-
-	for i := 0; i < 160*5+10; i++ {
-		d.logoSin = append(d.logoSin, 8*math.Sin(float64(i)*0.15))
-	}
-
-	for i := 0; i < 160; i++ {
-		d.logoSin = append(d.logoSin, 0)
+	var err error
+	d.logoSin, err = motion.CompileWaveTable(presets.TCBLogoWaveSections()...)
+	if err != nil {
+		panic(err)
 	}
 }
 
@@ -983,7 +898,7 @@ func (d *TCBDemo) initScrollText() {
 
 func (d *TCBDemo) preprocessScrollText() {
 	var err error
-	d.planes, err = scrolling.NewPlanes(scrolling.PlanesConfig{Slots: presets.TCBPlaneSlots(d.scrollText, 32), Forms: presets.TCBScrollForms(), Visible: 30, PhaseStep: .02, Projection: scrolling.PlaneProjection{Focal: 250, Depth: 150, OriginX: -450, CenterX: 160, CenterY: 100, XBias: -16, YBias: -14, VerticalOffset: -4}})
+	d.planes, err = scrolling.NewPlanes(presets.TCBPlanes(d.scrollText, 32))
 	if err != nil {
 		panic(err)
 	}
@@ -1930,9 +1845,7 @@ func (d *CocoDemo) drawCopperBars3(dst *ebiten.Image) {
 }
 
 func (d *CocoDemo) initCopperSin() {
-	d.copperSin = []int{
-		264, 264, 268, 272, 276, 280, 280, 284, 288, 292, 296, 296, 300, 304, 308, 312, 312, 316, 320, 324, 328, 328, 332, 336, 340, 340, 344, 348, 352, 352, 356, 360, 364, 364, 368, 372, 376, 376, 380, 384, 388, 388, 392, 396, 396, 400, 404, 404, 408, 412, 412, 416, 420, 420, 424, 428, 428, 432, 436, 436, 440, 440, 444, 448, 448, 452, 452, 456, 456, 460, 460, 464, 464, 468, 472, 472, 472, 476, 476, 480, 480, 484, 484, 488, 488, 488, 492, 492, 496, 496, 496, 500, 500, 500, 504, 504, 504, 508, 508, 508, 512, 512, 512, 512, 516, 516, 516, 516, 520, 520, 520, 520, 520, 520, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 520, 520, 520, 520, 520, 520, 516, 516, 516, 516, 512, 512, 512, 512, 508, 508, 508, 508, 504, 504, 504, 500, 500, 500, 496, 496, 492, 492, 492, 488, 488, 484, 484, 480, 480, 480, 476, 476, 472, 472, 468, 468, 464, 464, 460, 456, 456, 452, 452, 448, 448, 444, 444, 440, 436, 436, 432, 428, 428, 424, 424, 420, 416, 416, 412, 408, 408, 404, 400, 400, 396, 392, 388, 388, 384, 380, 380, 376, 372, 368, 368, 364, 360, 356, 356, 352, 348, 344, 344, 340, 336, 332, 328, 328, 324, 320, 316, 316, 312, 308, 304, 300, 300, 296, 292, 288, 284, 284, 280, 276, 272, 268, 264, 264, 264, 260, 256, 252, 252, 248, 244, 240, 236, 236, 232, 228, 224, 220, 220, 216, 212, 208, 204, 204, 200, 196, 192, 192, 188, 184, 180, 176, 176, 172, 168, 164, 164, 160, 156, 152, 152, 148, 144, 144, 140, 136, 132, 132, 128, 124, 124, 120, 116, 116, 112, 108, 108, 104, 100, 100, 96, 96, 92, 88, 88, 84, 84, 80, 76, 76, 72, 72, 68, 68, 64, 64, 60, 60, 56, 56, 52, 52, 48, 48, 44, 44, 40, 40, 40, 36, 36, 32, 32, 32, 28, 28, 28, 24, 24, 24, 20, 20, 20, 16, 16, 16, 16, 12, 12, 12, 12, 12, 8, 8, 8, 8, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 8, 8, 8, 8, 8, 12, 12, 12, 12, 12, 16, 16, 16, 20, 20, 20, 20, 24, 24, 24, 28, 28, 28, 32, 32, 36, 36, 36, 40, 40, 44, 44, 44, 48, 48, 52, 52, 56, 56, 60, 60, 64, 64, 68, 68, 72, 72, 76, 80, 80, 84, 84, 88, 92, 92, 96, 96, 100, 104, 104, 108, 112, 112, 116, 120, 120, 124, 128, 128, 132, 136, 136, 140, 144, 148, 148, 152, 156, 156, 160, 164, 168, 168, 172, 176, 180, 180, 184, 188, 192, 196, 196, 200, 204, 208, 212, 212, 216, 220, 224, 224, 228, 232, 236, 240, 244, 244, 248, 252, 256, 260, 260, 264, 264, 268, 272, 276, 280, 280, 284, 288, 292, 296, 296, 300, 304, 308, 312, 312, 316, 320, 324, 328, 328, 332, 336, 340, 340, 344, 348, 352, 352, 356, 360, 364, 364, 368, 372, 376, 376, 380, 384, 388, 388, 392, 396, 396, 400, 404, 404, 408, 412, 412, 416, 420, 420, 424, 428, 428, 432, 436, 436, 440, 440, 444, 448, 448, 452, 452, 456, 456, 460, 460, 464, 464, 468, 472, 472, 472, 476, 476, 480, 480, 484, 484, 488, 488, 488, 492, 492, 496, 496, 496, 500, 500, 500, 504, 504, 504, 508, 508, 508, 512, 512, 512, 512, 516, 516, 516, 516, 520, 520, 520, 520, 520, 520, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 524, 520, 520, 520, 520, 520, 520, 516, 516, 516, 516, 512, 512, 512, 512, 508, 508, 508, 508, 504, 504, 504, 500, 500, 500, 496, 496, 492, 492, 492, 488, 488, 484, 484, 480, 480, 480, 476, 476, 472, 472, 468, 468, 464, 464, 460, 456, 456, 452, 452, 448, 448, 444, 444, 440, 436, 436, 432, 428, 428, 424, 424, 420, 416, 416, 412, 408, 408, 404, 400, 400, 396, 392, 388, 388, 384, 380, 380, 376, 372, 368, 368, 364, 360, 356, 356, 352, 348, 344, 344, 340, 336, 332, 328, 328, 324, 320, 316, 316, 312, 308, 304, 300, 300, 296, 292, 288, 284, 284, 280, 276, 272, 268, 264, 264, 264, 260, 256, 252, 252, 248, 244, 240, 236, 236, 232, 228, 224, 220, 220, 216, 212, 208, 204, 204, 200, 196, 192, 192, 188, 184, 180, 176, 176, 172, 168, 164, 164, 160, 156, 152, 152, 148, 144, 144, 140, 136, 132, 132, 128, 124, 124, 120, 116, 116, 112, 108, 108, 104, 100, 100, 96, 96, 92, 88, 88, 84, 84, 80, 76, 76, 72, 72, 68, 68, 64, 64, 60, 60, 56, 56, 52, 52, 48, 48, 44, 44, 40, 40, 40, 36, 36, 32, 32, 32, 28, 28, 28, 24, 24, 24, 20, 20, 20, 16, 16, 16, 16, 12, 12, 12, 12, 12, 8, 8, 8, 8, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8, 8, 8, 8, 8, 8, 12, 12, 12, 12, 12, 16, 16, 16, 20, 20, 20, 20, 24, 24, 24, 28, 28, 28, 32, 32, 36, 36, 36, 40, 40, 44, 44, 44, 48, 48, 52, 52, 56, 56, 60, 60, 64, 64, 68, 68, 72, 72, 76, 80, 80, 84, 84, 88, 92, 92, 96, 96, 100, 104, 104, 108, 112, 112, 116, 120, 120, 124, 128, 128, 132, 136, 136, 140, 144, 148, 148, 152, 156, 156, 160, 164, 168, 168, 172, 176, 180, 180, 184, 188, 192, 196, 196, 200, 204, 208, 212, 212, 216, 220, 224, 224, 228, 232, 236, 240, 244, 244, 248, 252, 256, 260, 260,
-	}
+	d.copperSin = presets.BilizirCopperOffsets()
 }
 
 func (d *CocoDemo) createCurves() {
@@ -2380,7 +2293,7 @@ type MegaDemoGame struct {
 
 	audioContext *audio.Context
 	audioPlayer  *audio.Player
-	ymPlayer     *YMPlayer
+	musicStream  *sound.Stream
 
 	cameraState CameraState
 	stateTimer  float64
@@ -2422,15 +2335,15 @@ func NewMegaDemoGame() *MegaDemoGame {
 
 	// Initialize music
 	var err error
-	g.ymPlayer, err = NewYMPlayer(musicData, sampleRate, true)
+	g.musicStream, err = sound.Open("music.ym", musicData, sound.Options{SampleRate: sampleRate, Loop: true, PCMFormat: sound.PCM16, Gain: 0.5})
 	if err != nil {
-		log.Printf("Failed to create YM player: %v", err)
+		log.Printf("Failed to open music: %v", err)
 	} else {
-		g.audioPlayer, err = g.audioContext.NewPlayer(g.ymPlayer)
+		g.audioPlayer, err = g.audioContext.NewPlayer(g.musicStream)
 		if err != nil {
 			log.Printf("Failed to create audio player: %v", err)
-			g.ymPlayer.Close()
-			g.ymPlayer = nil
+			g.musicStream.Close()
+			g.musicStream = nil
 		} else {
 			g.audioPlayer.Play()
 		}
