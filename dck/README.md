@@ -13,4 +13,8 @@ provides the configured stereo PCM format. The demo keeps its playback level and
 
 The Phenomena and TCB scenes use the same `DNAFrames`, `Planes` and `PlaneRenderer` implementations as their standalone DCK demos. Their original timing, raster palettes and the multiscreen camera remain local.
 
+The embedded Coco panel now shares `composite.CopperBars` with Bilizir and
+standalone Coco. Its integer clocks and 36 cached image strips remain visually
+identical across 1,200 compared frames of the isolated panel.
+
 See the [DCK effect configuration guide](../../../lib/democonstructionkit/docs/EFFECT_OPTIONS.md) for the shared API and examples.

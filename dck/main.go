@@ -3,6 +3,7 @@ package multiscreen
 import (
 	"bytes"
 	"fmt"
+	kit "github.com/olivierh59500/democonstructionkit"
 	"image"
 	"image/color"
 	originalassets "multiscreen-mega-demo"
@@ -1164,10 +1165,7 @@ type CocoDemo struct {
 	logoX float64
 
 	// Copper bars
-	cnt        int
-	cnt2       int
-	copperSin  []int
-	copperBars [10]*ebiten.Image
+	copper *composite.CopperBars
 
 	// VBL counter
 	iteration int
@@ -1206,9 +1204,6 @@ func NewCocoDemo() *CocoDemo {
 	d.createCurves()
 	d.precalcMainWave()
 
-	// Init copper bars sine table
-	d.initCopperSin()
-
 	return d
 }
 
@@ -1231,9 +1226,9 @@ func (d *CocoDemo) Init() error {
 		log.Printf("Error loading bars: %v", err)
 	} else {
 		d.barsImg = ebiten.NewImageFromImage(img)
-		for i := range d.copperBars {
-			y := i * 2
-			d.copperBars[i] = d.barsImg.SubImage(image.Rect(0, y, d.barsImg.Bounds().Dx(), y+2)).(*ebiten.Image)
+		d.copper, err = composite.NewCopperBars(presets.BilizirCopperBars(d.barsImg, 72, composite.CopperImages, composite.MaskedClock))
+		if err != nil {
+			return err
 		}
 	}
 
@@ -1282,8 +1277,11 @@ func (d *CocoDemo) Update() error {
 	d.iteration++
 
 	// Update copper bars
-	d.cnt = (d.cnt + 3) & 0x3ff
-	d.cnt2 = (d.cnt2 - 5) & 0x3ff
+	if d.copper != nil {
+		if err := d.copper.Update(kit.Frame{}); err != nil {
+			return err
+		}
+	}
 
 	// Update 3D cubes
 	for i := 0; i < nbCubes3; i++ {
@@ -1532,7 +1530,9 @@ func (d *CocoDemo) drawTitleWithCopperbars3(dst *ebiten.Image) {
 	}
 
 	vector.DrawFilledRect(dst, 0, 0, demoWidth, 72, color.Black, false)
-	d.drawCopperBars3(dst)
+	if d.copper != nil {
+		d.copper.Draw(dst)
+	}
 
 	titleX := 64 + float64(demoWidth)*math.Cos(d.logoX)
 	titleH := float64(d.titleImg.Bounds().Dy())
@@ -1542,46 +1542,6 @@ func (d *CocoDemo) drawTitleWithCopperbars3(dst *ebiten.Image) {
 	op.GeoM.Scale(1.0, scaleY)
 	op.GeoM.Translate(titleX, 0)
 	dst.DrawImage(d.titleImg, op)
-}
-
-func (d *CocoDemo) drawCopperBars3(dst *ebiten.Image) {
-	if d.barsImg == nil {
-		return
-	}
-
-	if d.copperBars[0] == nil {
-		return
-	}
-
-	cc := 0
-	for i := 0; i < 36; i++ {
-		val2 := (d.cnt + i*7) & 0x3ff
-		val := d.copperSin[val2]
-		val2 = (d.cnt2 + i*10) & 0x3ff
-		val += d.copperSin[val2]
-		val += 60
-
-		xPos := val >> 1
-		yPos := i << 1
-		height := 72 - yPos
-
-		if height > 0 && yPos < 72 {
-			op := &ebiten.DrawImageOptions{}
-			scaleY := float64(height) / 2.0
-			op.GeoM.Scale(1, scaleY)
-			op.GeoM.Translate(float64(xPos), float64(yPos))
-			dst.DrawImage(d.copperBars[cc/2], op)
-		}
-
-		cc += 2
-		if cc >= 20 {
-			cc = 0
-		}
-	}
-}
-
-func (d *CocoDemo) initCopperSin() {
-	d.copperSin = presets.BilizirCopperOffsets()
 }
 
 func (d *CocoDemo) createCurves() {
