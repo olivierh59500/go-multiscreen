@@ -1513,16 +1513,10 @@ const (
 	fontCharHeight4 = 40
 )
 
-var (
-	vivaLogoXSinStep, vivaLogoXCosStep   = math.Sincos(0.2)
-	vivaLogoX2SinStep, vivaLogoX2CosStep = math.Sincos(1.0 / 60.0)
-	vivaLogoYSinStep, vivaLogoYCosStep   = math.Sincos(5.0 / 37.0)
-	vivaLogoY2SinStep, vivaLogoY2CosStep = math.Sincos(5.0 / 17.0)
-)
-
 type VivaDemo struct {
-	pseudoScroll *scrolling.Scrolling
-	initialized  bool
+	pseudoScroll  *scrolling.Scrolling
+	logoFormation *sprites.RecurrentFormation
+	initialized   bool
 
 	logoImg   *ebiten.Image
 	titleImg  *ebiten.Image
@@ -1574,6 +1568,11 @@ func (d *VivaDemo) Init() error {
 		log.Printf("Error loading logo: %v", err)
 	} else {
 		d.logoImg = ebiten.NewImageFromImage(img)
+		formation := presets.VivaLogoFormation(d.logoImg, demoWidth, demoHeight, 150.0/4)
+		d.logoFormation, err = sprites.NewRecurrentFormation(formation)
+		if err != nil {
+			return err
+		}
 	}
 
 	img, _, err = image.Decode(bytes.NewReader(demo4TitleData))
@@ -1641,6 +1640,11 @@ func (d *VivaDemo) Update() error {
 	d.rasterMotion.Step()
 
 	d.loopCounter++
+	if d.logoFormation != nil {
+		if err := d.logoFormation.Update(float64(d.loopCounter)); err != nil {
+			return err
+		}
+	}
 	if d.pseudoScroll != nil {
 		return d.pseudoScroll.Update(kit.Frame{Tick: uint64(d.loopCounter), Time: float64(d.loopCounter) / 60})
 	}
@@ -1696,32 +1700,8 @@ func (d *VivaDemo) Draw(screen *ebiten.Image) {
 		titleViewport.DrawImage(d.titleImg, titleOp)
 	}
 
-	// Draw animated logos directly; the old 400x300 canvas was immediately
-	// scaled to the same 800x600 destination.
-	if d.logoImg != nil {
-		midX := 200.0 - 16
-		midY := 24.0 + 150.0 - 16
-		incY := 150.0 / 4
-		base := float64(d.loopCounter)
-		xSin, xCos := math.Sincos(base / 25)
-		x2Sin, x2Cos := math.Sincos(base / 300)
-		ySin, yCos := math.Sincos(base / 37)
-		y2Sin, y2Cos := math.Sincos(base / 17)
-
-		for s := 0; s < 10; s++ {
-			spX := midX + midX*xSin*x2Cos
-			spY := midY + incY*ySin + incY*y2Cos
-
-			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Scale(2, 2)
-			op.GeoM.Translate(spX*2, spY*2)
-			screen.DrawImage(d.logoImg, op)
-
-			xSin, xCos = stepSinCosForward(xSin, xCos, vivaLogoXSinStep, vivaLogoXCosStep)
-			x2Sin, x2Cos = stepSinCosForward(x2Sin, x2Cos, vivaLogoX2SinStep, vivaLogoX2CosStep)
-			ySin, yCos = stepSinCosForward(ySin, yCos, vivaLogoYSinStep, vivaLogoYCosStep)
-			y2Sin, y2Cos = stepSinCosForward(y2Sin, y2Cos, vivaLogoY2SinStep, vivaLogoY2CosStep)
-		}
+	if d.logoFormation != nil {
+		d.logoFormation.Draw(screen)
 	}
 }
 
