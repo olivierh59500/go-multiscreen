@@ -788,7 +788,6 @@ var demo2FontData = originalassets.DCKAssetDemo2FontData()
 const tcbScrollShaderSource = scrolling.PlaneShaderSource
 
 type TCBDemo struct {
-	scroll      *scrolling.Scrolling
 	initialized bool
 
 	rasters   *ebiten.Image
@@ -796,14 +795,9 @@ type TCBDemo struct {
 	logo      *ebiten.Image
 	font      *ebiten.Image
 
-	logoCenter *ebiten.Image
-
-	mountainBands *composite.Bands
-	logoRows      *composite.ProfileImage
+	part *effects.MultiPlaneScene
 
 	scrollText string
-
-	centerFlip *sprites.AxisFlip
 }
 
 func NewTCBDemo() *TCBDemo {
@@ -852,11 +846,6 @@ func (d *TCBDemo) Init() error {
 	}
 
 	var err error
-	d.mountainBands, err = composite.NewBands(presets.TCBMountainBands())
-	if err != nil {
-		return err
-	}
-
 	img, _, err := image.Decode(bytes.NewReader(demo2RastData))
 	if err != nil {
 		log.Printf("Error loading rasters: %v", err)
@@ -889,30 +878,7 @@ func (d *TCBDemo) Init() error {
 	} else {
 		d.font = ebiten.NewImageFromImage(img)
 	}
-	if err = d.initScroll(); err != nil {
-		return err
-	}
-
-	if d.logo != nil {
-		d.logoCenter = d.logo.SubImage(image.Rect(114, 0, 193, 15)).(*ebiten.Image)
-	}
-	profile, err := motion.CompileWaveTable(presets.TCBLogoWaveSections()...)
-	if err != nil {
-		return err
-	}
-	logoConfig := presets.TCBLogoRowProfile(profile, 303)
-	logoConfig.ScaleX, logoConfig.ScaleY = 2, 2
-	logoConfig.OutputX, logoConfig.OutputY = 64, 60
-	d.logoRows, err = composite.NewProfileImage(d.logo.SubImage(image.Rect(0, 16, 303, 48)).(*ebiten.Image), logoConfig)
-	if err != nil {
-		return err
-	}
-	d.centerFlip, err = sprites.NewAxisFlip(sprites.AxisFlipConfig{
-		Front: d.logoCenter, Saw: &motion.SawToggleConfig{Start: 0, Velocity: .08, Boundary: 1, Restart: -1},
-		UseAnchor: true, AnchorX: 40, AnchorY: 8, BackMirrorY: true, BackMirrorShift: 16,
-		Filter: ebiten.FilterNearest, Blend: ebiten.BlendSourceOver,
-	})
-	if err != nil {
+	if err = d.initMultiPlaneScene(); err != nil {
 		return err
 	}
 
@@ -920,15 +886,33 @@ func (d *TCBDemo) Init() error {
 	return nil
 }
 
-func (d *TCBDemo) initScroll() error {
+func (d *TCBDemo) initMultiPlaneScene() error {
 	spec, _ := presets.FindFont("multiscreen-tcb")
 	metrics, err := spec.Build(d.font.Bounds())
 	if err != nil {
 		return err
 	}
-	config := presets.TCBProjectedScroll(d.scrollText, 32, scrolling.Face{Atlas: d.font, Metrics: metrics}, d.rasters)
-	config.Projected.Draw = scrolling.PlaneDraw{OriginX: 64, OriginY: 60, ScaleX: 2, ScaleY: 2}
-	d.scroll, err = scrolling.New(config)
+	scrollConfig := presets.TCBProjectedScroll(d.scrollText, 32, scrolling.Face{Atlas: d.font, Metrics: metrics}, d.rasters)
+	scrollConfig.Projected.Draw = scrolling.PlaneDraw{OriginX: 64, OriginY: 60, ScaleX: 2, ScaleY: 2}
+	profile, err := motion.CompileWaveTable(presets.TCBLogoWaveSections()...)
+	if err != nil {
+		return err
+	}
+	rows := presets.TCBLogoRowProfile(profile, 303)
+	rows.ScaleX, rows.ScaleY = 2, 2
+	rows.OutputX, rows.OutputY = 64, 60
+	d.part, err = effects.NewMultiPlaneScene(effects.MultiPlaneSceneConfig{
+		Mountains: d.mountains, Logo: d.logo,
+		LogoSource: image.Rect(0, 16, 303, 48), CenterSource: image.Rect(114, 0, 193, 15),
+		Bands: presets.TCBMountainBands(), Rows: rows,
+		Center: sprites.AxisFlipConfig{
+			Saw:       &motion.SawToggleConfig{Start: 0, Velocity: .08, Boundary: 1, Restart: -1},
+			UseAnchor: true, AnchorX: 40, AnchorY: 8, BackMirrorY: true, BackMirrorShift: 16,
+			Filter: ebiten.FilterNearest, Blend: ebiten.BlendSourceOver,
+		},
+		Scroll: scrollConfig, Viewport: image.Rect(64, 60, 704, 460),
+		StageSize: image.Pt(320, 200), CenterX: 160, CenterY: 88, Filter: ebiten.FilterNearest,
+	})
 	return err
 }
 
@@ -939,13 +923,7 @@ func (d *TCBDemo) Update() error {
 		}
 	}
 
-	d.mountainBands.Step()
-
-	d.logoRows.Advance()
-
-	d.centerFlip.Step()
-
-	return d.scroll.Update(kit.Frame{})
+	return d.part.Update(kit.Frame{})
 }
 
 func (d *TCBDemo) Draw(screen *ebiten.Image) {
@@ -954,25 +932,7 @@ func (d *TCBDemo) Draw(screen *ebiten.Image) {
 	}
 
 	screen.Fill(color.Black)
-	// The bounded destination preserves the original paper-canvas crop.
-	mountainViewport := screen.SubImage(image.Rect(64, 60, 704, 460)).(*ebiten.Image)
-	d.mountainBands.DrawAt(mountainViewport, d.mountains, 64, 60)
-
-	d.logoRows.Draw(screen)
-
-	parent := ebiten.GeoM{}
-	parent.Scale(2, 2)
-	parent.Translate(64, 60)
-	d.centerFlip.DrawAtWith(screen, 160, 88, parent)
-
-	d.drawScroll3D(screen)
-}
-
-func (d *TCBDemo) drawScroll3D(screen *ebiten.Image) {
-	if d.scroll != nil {
-		view := screen.SubImage(image.Rect(64, 60, 704, 460)).(*ebiten.Image)
-		d.scroll.Draw(view)
-	}
+	d.part.Draw(screen)
 }
 
 // ==================== COCO DEMO (Demo3) ====================

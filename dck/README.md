@@ -33,7 +33,9 @@ the TCB preset, with integer phase snapping before 2× movement. Twelve
 isolated captures around fractional speeds and wraps remain pixel-identical.
 The 32-row logo warp now uses `composite.ProfileImage` with the same native
 crop, phase reset and parent viewport mapping as the standalone screen. Nine
-isolated captures at section joins and wrap remain pixel-identical.
+isolated captures at section joins and wrap match the earlier per-row sine
+distortion in all color channels. The complete TCB panel now uses
+`effects.MultiPlaneScene`; the Multiscreen camera remains its host.
 Projected text now enters through the unified `scrolling.New` facade, with the
 same font metrics, plane forms and 2× viewport placement. Eight isolated
 captures through frame 8,000 remain pixel-identical.
