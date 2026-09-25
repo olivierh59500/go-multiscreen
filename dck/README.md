@@ -28,3 +28,6 @@ go run ./dck/cmd/capture-tcb -frames 1,12,13,38,39,240 -out captures/tcb
 The TCB panel's central logo uses the same `sprites.AxisFlip` saw cycle and
 mirrored source as the standalone screen. Ten isolated captures around its
 face changes remain pixel-identical.
+Its mountain background also uses the shared `composite.Bands` renderer and
+the TCB preset, with integer phase snapping before 2× movement. Twelve
+isolated captures around fractional speeds and wraps remain pixel-identical.

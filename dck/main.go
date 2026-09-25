@@ -802,7 +802,7 @@ type TCBDemo struct {
 	stripVertices []ebiten.Vertex
 	stripIndices  []uint16
 
-	backgroundMotion *motion.WrapBank
+	mountainBands *composite.Bands
 
 	scrollText string
 
@@ -879,7 +879,7 @@ func (d *TCBDemo) Init() error {
 	}
 
 	var err error
-	d.backgroundMotion, err = motion.NewWrapBank(presets.TCBMountainWrapConfig())
+	d.mountainBands, err = composite.NewBands(presets.TCBMountainBands())
 	if err != nil {
 		return err
 	}
@@ -953,7 +953,7 @@ func (d *TCBDemo) Update() error {
 		}
 	}
 
-	d.backgroundMotion.Step()
+	d.mountainBands.Step()
 
 	d.dcounter++
 	if d.dcounter > len(d.logoSin)-80 {
@@ -979,47 +979,9 @@ func (d *TCBDemo) Draw(screen *ebiten.Image) {
 	}
 
 	screen.Fill(color.Black)
-	d.stripVertices = d.stripVertices[:0]
-	d.stripIndices = d.stripIndices[:0]
-
-	for i := 0; i < 16; i++ {
-		xPos := int(d.backgroundMotion.At(i)) * 2
-		yPos := i * 10
-
-		d.stripVertices, d.stripIndices = appendTexturedQuad(
-			d.stripVertices, d.stripIndices,
-			float32(64+xPos), float32(60+yPos), 1024, 10,
-			0, float32(i*10), 1024, 10,
-		)
-		d.stripVertices, d.stripIndices = appendTexturedQuad(
-			d.stripVertices, d.stripIndices,
-			float32(64+xPos+640), float32(60+yPos), 1024, 10,
-			0, float32(i*10), 1024, 10,
-		)
-	}
-
-	for i := 16; i < 32; i++ {
-		xPos := int(d.backgroundMotion.At(i)) * 2
-		yPos := i*10 + 84
-
-		d.stripVertices, d.stripIndices = appendTexturedQuad(
-			d.stripVertices, d.stripIndices,
-			float32(64+xPos), float32(60+yPos), 1024, 10,
-			0, float32(i*10), 1024, 10,
-		)
-		d.stripVertices, d.stripIndices = appendTexturedQuad(
-			d.stripVertices, d.stripIndices,
-			float32(64+xPos+640), float32(60+yPos), 1024, 10,
-			0, float32(i*10), 1024, 10,
-		)
-	}
-	if len(d.stripIndices) > 0 {
-		// The former 640x400 paper canvas clipped the horizontally scrolling
-		// strips to this viewport. Drawing through a destination sub-image keeps
-		// that clipping while avoiding both the render target and its full copy.
-		mountainViewport := screen.SubImage(image.Rect(64, 60, 704, 460)).(*ebiten.Image)
-		mountainViewport.DrawTriangles(d.stripVertices, d.stripIndices, d.mountains, nil)
-	}
+	// The bounded destination preserves the original paper-canvas crop.
+	mountainViewport := screen.SubImage(image.Rect(64, 60, 704, 460)).(*ebiten.Image)
+	d.mountainBands.DrawAt(mountainViewport, d.mountains, 64, 60)
 
 	d.stripVertices = d.stripVertices[:0]
 	d.stripIndices = d.stripIndices[:0]
