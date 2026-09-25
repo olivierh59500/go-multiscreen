@@ -39,3 +39,6 @@ distortion in all color channels. The complete TCB panel now uses
 Projected text now enters through the unified `scrolling.New` facade, with the
 same font metrics, plane forms and 2× viewport placement. Eight isolated
 captures through frame 8,000 remain pixel-identical.
+
+The isolated Viva panel can also be captured without the four-panel camera or
+audio device using `go run ./dck/cmd/capture-viva -frames 1,60,240,600`.
