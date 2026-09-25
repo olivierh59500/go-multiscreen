@@ -47,3 +47,6 @@ with this panel's messages, atlas slices and 800×600 bounds. Eight captures
 through frame 4,800 remain identical in all color and alpha channels.
 Its ten logos now use the same `sprites.RecurrentFormation` with the panel's
 37.5-pixel vertical amplitude. Eight captures remain identical in every channel.
+Its title uses the same `composite.RasterTitle` in direct clipped mode, without
+an intermediate title surface. Fourteen captures through wrap and title-cue
+boundaries remain identical in every channel.

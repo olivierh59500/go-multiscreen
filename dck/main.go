@@ -1525,8 +1525,8 @@ type VivaDemo struct {
 	fontImg   *ebiten.Image
 	fontAtlas *scrolling.Atlas
 
-	logoX        float64
-	rasterMotion *motion.WrapBank
+	logoX       float64
+	rasterTitle *composite.RasterTitle
 
 	posXi float64
 	posZi float64
@@ -1558,11 +1558,6 @@ func (d *VivaDemo) Init() error {
 	}
 
 	var err error
-	d.rasterMotion, err = motion.NewWrapBank(presets.VivaRasterWrapConfig())
-	if err != nil {
-		return err
-	}
-
 	img, _, err := image.Decode(bytes.NewReader(demo4LogoData))
 	if err != nil {
 		log.Printf("Error loading logo: %v", err)
@@ -1587,6 +1582,12 @@ func (d *VivaDemo) Init() error {
 		log.Printf("Error loading raster: %v", err)
 	} else {
 		d.rasterImg = ebiten.NewImageFromImage(img)
+	}
+	if d.titleImg != nil && d.rasterImg != nil {
+		d.rasterTitle, err = composite.NewRasterTitle(presets.VivaRasterTitleDirect(d.titleImg, d.rasterImg, demoWidth))
+		if err != nil {
+			return err
+		}
 	}
 
 	img, _, err = image.Decode(bytes.NewReader(demo4TileData))
@@ -1637,7 +1638,9 @@ func (d *VivaDemo) Update() error {
 	d.logoX += 0.0125
 
 	// Raster animation
-	d.rasterMotion.Step()
+	if d.rasterTitle != nil {
+		d.rasterTitle.Step()
+	}
 
 	d.loopCounter++
 	if d.logoFormation != nil {
@@ -1678,26 +1681,9 @@ func (d *VivaDemo) Draw(screen *ebiten.Image) {
 	// Black bar at top
 	vector.DrawFilledRect(screen, 0, 0, demoWidth, 72, color.Black, false)
 
-	// Draw the moving title directly. A fixed destination sub-image clips the
-	// vertically tiled raster exactly like the former 528x36 render target,
-	// without forcing an extra render pass and a full-canvas copy.
-	titleX := 64 + 800*math.Cos(d.logoX)
-	vector.DrawFilledRect(screen, float32(titleX), 14, demoWidth, 72, color.Black, false)
-	titleViewport := screen.SubImage(image.Rect(0, 14, demoWidth, 86)).(*ebiten.Image)
-	if d.rasterImg != nil {
-		rasterScaleX := float64(demoWidth) / float64(d.rasterImg.Bounds().Dx())
-		for _, rasterY := range [...]float64{d.rasterMotion.At(0), d.rasterMotion.At(1), d.rasterMotion.At(1) + 72} {
-			op := &ebiten.DrawImageOptions{}
-			op.GeoM.Scale(rasterScaleX, 2)
-			op.GeoM.Translate(titleX, 14+2*rasterY)
-			titleViewport.DrawImage(d.rasterImg, op)
-		}
-	}
-	if d.titleImg != nil {
-		titleOp := &ebiten.DrawImageOptions{}
-		titleOp.GeoM.Scale(float64(demoWidth)/float64(d.titleImg.Bounds().Dx()), 2)
-		titleOp.GeoM.Translate(titleX, 14)
-		titleViewport.DrawImage(d.titleImg, titleOp)
+	if d.rasterTitle != nil {
+		titleX := 64 + 800*math.Cos(d.logoX)
+		d.rasterTitle.DrawAt(screen, titleX, 14)
 	}
 
 	if d.logoFormation != nil {
