@@ -24,3 +24,7 @@ Capture the embedded TCB scene without the four-panel camera or audio device:
 ```sh
 go run ./dck/cmd/capture-tcb -frames 1,12,13,38,39,240 -out captures/tcb
 ```
+
+The TCB panel's central logo uses the same `sprites.AxisFlip` saw cycle and
+mirrored source as the standalone screen. Ten isolated captures around its
+face changes remain pixel-identical.

@@ -15,6 +15,7 @@ import (
 	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/scrolling"
 	"github.com/olivierh59500/democonstructionkit/sound"
+	"github.com/olivierh59500/democonstructionkit/sprites"
 
 	_ "image/png"
 	"log"
@@ -805,19 +806,15 @@ type TCBDemo struct {
 
 	scrollText string
 
-	logoSin  []float64
-	dcounter int
-	rotPos   float64
-	rotAdd   float64
-	next     int
+	logoSin    []float64
+	dcounter   int
+	centerFlip *sprites.AxisFlip
 }
 
 func NewTCBDemo() *TCBDemo {
 	d := &TCBDemo{
 		stripVertices: make([]ebiten.Vertex, 0, 64*4),
 		stripIndices:  make([]uint16, 0, 64*6),
-
-		rotAdd: 1,
 	}
 
 	d.initLogoSin()
@@ -926,6 +923,14 @@ func (d *TCBDemo) Init() error {
 	if d.logo != nil {
 		d.logoCenter = d.logo.SubImage(image.Rect(114, 0, 193, 15)).(*ebiten.Image)
 	}
+	d.centerFlip, err = sprites.NewAxisFlip(sprites.AxisFlipConfig{
+		Front: d.logoCenter, Saw: &motion.SawToggleConfig{Start: 0, Velocity: .08, Boundary: 1, Restart: -1},
+		UseAnchor: true, AnchorX: 40, AnchorY: 8, BackMirrorY: true, BackMirrorShift: 16,
+		Filter: ebiten.FilterNearest, Blend: ebiten.BlendSourceOver,
+	})
+	if err != nil {
+		return err
+	}
 
 	d.initialized = true
 	return nil
@@ -955,14 +960,7 @@ func (d *TCBDemo) Update() error {
 		d.dcounter = 0
 	}
 
-	d.rotPos += d.rotAdd * 0.08
-	if d.rotPos > 1 {
-		d.rotPos = -1
-		d.next++
-		if d.next > 1 {
-			d.next = 0
-		}
-	}
+	d.centerFlip.Step()
 
 	d.scroll3D(4)
 
@@ -1037,19 +1035,10 @@ func (d *TCBDemo) Draw(screen *ebiten.Image) {
 		screen.DrawTriangles(d.stripVertices, d.stripIndices, d.logo, nil)
 	}
 
-	if d.logoCenter != nil {
-		op := &ebiten.DrawImageOptions{}
-		if d.next != 0 {
-			op.GeoM.Scale(1, -1)
-			op.GeoM.Translate(0, 16)
-		}
-		op.GeoM.Translate(-40, -8)
-		op.GeoM.Scale(1, d.rotPos)
-		op.GeoM.Translate(160, 88)
-		op.GeoM.Scale(2, 2)
-		op.GeoM.Translate(64, 60)
-		screen.DrawImage(d.logoCenter, op)
-	}
+	parent := ebiten.GeoM{}
+	parent.Scale(2, 2)
+	parent.Translate(64, 60)
+	d.centerFlip.DrawAtWith(screen, 160, 88, parent)
 
 	d.drawScroll3D(screen)
 }
