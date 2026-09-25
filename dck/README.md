@@ -18,3 +18,9 @@ standalone Coco. Its integer clocks and 36 cached image strips remain visually
 identical across 1,200 compared frames of the isolated panel.
 
 See the [DCK effect configuration guide](../../../lib/democonstructionkit/docs/EFFECT_OPTIONS.md) for the shared API and examples.
+
+Capture the embedded TCB scene without the four-panel camera or audio device:
+
+```sh
+go run ./dck/cmd/capture-tcb -frames 1,12,13,38,39,240 -out captures/tcb
+```
