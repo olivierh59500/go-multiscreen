@@ -173,16 +173,6 @@ func TestCocoScrollerFollowsWaveAcrossThreeFullMessages(t *testing.T) {
 	t.Logf("first full message loop reached near wave position %d", firstWrapWavePos)
 }
 
-func TestAdvanceScroller4WrapsWithoutModulo(t *testing.T) {
-	text := []rune("AB")
-	if got := advanceScroller4(120, text); got != 124 {
-		t.Fatalf("advanceScroller4 before wrap = %g, want 124", got)
-	}
-	if got := advanceScroller4(124, text); got != 0 {
-		t.Fatalf("advanceScroller4 at wrap = %g, want 0", got)
-	}
-}
-
 func TestHalfVolumeIntegerMatchesPreviousFloatConversion(t *testing.T) {
 	for value := math.MinInt16; value <= math.MaxInt16; value++ {
 		got := int16(value) / 2

@@ -1514,9 +1514,6 @@ const (
 )
 
 var (
-	vivaZSinStep, vivaZCosStep           = math.Sincos(0.75)
-	vivaXSinStep, vivaXCosStep           = math.Sincos(18)
-	vivaYSinStep, vivaYCosStep           = math.Sincos(0.7)
 	vivaLogoXSinStep, vivaLogoXCosStep   = math.Sincos(0.2)
 	vivaLogoX2SinStep, vivaLogoX2CosStep = math.Sincos(1.0 / 60.0)
 	vivaLogoYSinStep, vivaLogoYCosStep   = math.Sincos(5.0 / 37.0)
@@ -1524,8 +1521,8 @@ var (
 )
 
 type VivaDemo struct {
-	scrollPrograms [4]*scrolling.Scrolling
-	initialized    bool
+	pseudoScroll *scrolling.Scrolling
+	initialized  bool
 
 	logoImg   *ebiten.Image
 	titleImg  *ebiten.Image
@@ -1536,11 +1533,6 @@ type VivaDemo struct {
 
 	logoX        float64
 	rasterMotion *motion.WrapBank
-
-	scrollX1 float64
-	scrollX2 float64
-	scrollX3 float64
-	scrollX4 float64
 
 	posXi float64
 	posZi float64
@@ -1614,96 +1606,20 @@ func (d *VivaDemo) Init() error {
 		if err != nil {
 			return err
 		}
+		pseudo := presets.VivaPseudo3D(scrolling.Face{}, d.fontAtlas,
+			[4]string{string(d.text1), string(d.text2), string(d.text3), string(d.text4)}, demoWidth, demoHeight)
+		d.pseudoScroll, err = scrolling.New(scrolling.Config{Pseudo3D: &pseudo})
+		if err != nil {
+			return err
+		}
 	}
 
 	d.initialized = true
 	return nil
 }
 
-var mapCharToFont4 = func() func(int) int {
-	lookup, err := presets.TileLookup("multiscreen-viva", false)
-	if err != nil {
-		panic(err)
-	}
-	return func(ch int) int { index, _ := lookup(rune(ch)); return index }
-}()
-
-func stepSinCosBackward(sinValue, cosValue, sinStep, cosStep float64) (float64, float64) {
-	return sinValue*cosStep - cosValue*sinStep, cosValue*cosStep + sinValue*sinStep
-}
-
 func stepSinCosForward(sinValue, cosValue, sinStep, cosStep float64) (float64, float64) {
 	return sinValue*cosStep + cosValue*sinStep, cosValue*cosStep - sinValue*sinStep
-}
-
-func (d *VivaDemo) drawScroller(dst *ebiten.Image, text []rune, scrollX float64, scrollerID int, baseY, t, horizontalWave, verticalWave float64) {
-	if d.fontImg == nil || len(text) == 0 {
-		return
-	}
-	program := d.scrollPrograms[scrollerID-1]
-	if program == nil {
-		images := make([]*ebiten.Image, len(text))
-		for i, r := range text {
-			var ok bool
-			images[i], _, ok = d.fontAtlas.Glyph(r)
-			if !ok {
-				images[i], _, _ = d.fontAtlas.Glyph(' ')
-			}
-		}
-		var err error
-		program, err = scrolling.FromImages(images, 64)
-		if err != nil {
-			panic(err)
-		}
-		d.scrollPrograms[scrollerID-1] = program
-	}
-	first := int(scrollX / 64)
-	last := first + 8
-	zs, zc := math.Sincos((t + float64(last)*.15) * 5)
-	xs, xc := math.Sincos(t*7 + float64(last)*18)
-	ys, yc := math.Sincos((t + float64(last)*.1) * 7)
-	advance := func() {
-		zs, zc = stepSinCosBackward(zs, zc, vivaZSinStep, vivaZCosStep)
-		xs, xc = stepSinCosBackward(xs, xc, vivaXSinStep, vivaXCosStep)
-		ys, yc = stepSinCosBackward(ys, yc, vivaYSinStep, vivaYCosStep)
-	}
-	for i := last; i >= len(text); i-- {
-		advance()
-	}
-	state := scrolling.IdentityState()
-	state.First = first
-	state.End = last + 1
-	state.Reverse = true
-	state.Map = func(s scrolling.Sample, op *ebiten.DrawImageOptions) bool {
-		z, xsin, ysin := zs*.5+1.5, xs, ys
-		advance()
-		x := math.Floor((float64(s.Index)*64 - 40 - xsin*32*horizontalWave - scrollX) * 2)
-		y := math.Floor(ysin*42*verticalWave + baseY - z*32)
-		scale := z
-		if scrollerID == 1 || scrollerID == 2 {
-			scale = 3 - z
-		}
-		if x < -100 || x > float64(demoWidth)+100 || y < -100 || y > float64(demoHeight)+100 || scale <= .1 {
-			return false
-		}
-		op.GeoM.Reset()
-		op.GeoM.Scale(scale, scale)
-		op.GeoM.Translate(x, y)
-		op.ColorScale.Scale(1, 1, 1, .9)
-		return true
-	}
-	program.DrawAt(dst, state)
-}
-
-func advanceScroller4(scrollX float64, text []rune) float64 {
-	if len(text) == 0 {
-		return 0
-	}
-	scrollX += 4
-	if limit := float64(len(text) * 64); scrollX >= limit {
-		scrollX -= limit
-	}
-	return scrollX
 }
 
 func (d *VivaDemo) Update() error {
@@ -1725,11 +1641,9 @@ func (d *VivaDemo) Update() error {
 	d.rasterMotion.Step()
 
 	d.loopCounter++
-	d.scrollX1 = advanceScroller4(d.scrollX1, d.text1)
-	d.scrollX2 = advanceScroller4(d.scrollX2, d.text2)
-	d.scrollX3 = advanceScroller4(d.scrollX3, d.text3)
-	d.scrollX4 = advanceScroller4(d.scrollX4, d.text4)
-
+	if d.pseudoScroll != nil {
+		return d.pseudoScroll.Update(kit.Frame{Tick: uint64(d.loopCounter), Time: float64(d.loopCounter) / 60})
+	}
 	return nil
 }
 
@@ -1753,14 +1667,9 @@ func (d *VivaDemo) Draw(screen *ebiten.Image) {
 
 	drawRepeatingRotozoom(screen, d.tileImg, centerX, centerY, zoom, rot, demoWidth*8, demoHeight*8, 1)
 
-	t := float64(d.loopCounter)/60 + 19
-	wave := math.Sin(t*0.25)*0.5 + 0.5
-	horizontalWave := math.Sqrt(1 - wave*wave)
-	verticalWave := math.Sin(t*0.5)*0.5 + 0.5
-	d.drawScroller(screen, d.text1, d.scrollX1, 1, 500, t, horizontalWave, verticalWave)
-	d.drawScroller(screen, d.text2, d.scrollX2, 2, 250, t, horizontalWave, verticalWave)
-	d.drawScroller(screen, d.text3, d.scrollX3, 3, 375, t, horizontalWave, verticalWave)
-	d.drawScroller(screen, d.text4, d.scrollX4, 4, 125, t, horizontalWave, verticalWave)
+	if d.pseudoScroll != nil {
+		d.pseudoScroll.Draw(screen)
+	}
 
 	// Black bar at top
 	vector.DrawFilledRect(screen, 0, 0, demoWidth, 72, color.Black, false)

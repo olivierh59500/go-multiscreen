@@ -1,6 +1,10 @@
 package multiscreen
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/olivierh59500/democonstructionkit/presets"
+)
 
 func legacyAtlasIndex(ch rune) (int, bool) {
 	if ch >= 'a' && ch <= 'z' {
@@ -62,8 +66,13 @@ func legacymapCharToFont4(charCode int) int {
 	}
 }
 func TestSharedmapCharToFont4MatchesOriginal(t *testing.T) {
+	lookup, err := presets.TileLookup("multiscreen-viva", false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for r := 0; r < 256; r++ {
-		if got, want := mapCharToFont4(int(r)), legacymapCharToFont4(int(r)); got != want {
+		got, _ := lookup(rune(r))
+		if want := legacymapCharToFont4(int(r)); got != want {
 			t.Fatalf("rune %U: got %d, want %d", r, got, want)
 		}
 	}

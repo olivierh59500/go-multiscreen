@@ -42,3 +42,6 @@ captures through frame 8,000 remain pixel-identical.
 
 The isolated Viva panel can also be captured without the four-panel camera or
 audio device using `go run ./dck/cmd/capture-viva -frames 1,60,240,600`.
+Its four pseudo-3D text banks use the same DCK transport as standalone Viva,
+with this panel's messages, atlas slices and 800×600 bounds. Eight captures
+through frame 4,800 remain identical in all color and alpha channels.
