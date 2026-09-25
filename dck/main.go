@@ -1525,7 +1525,7 @@ type VivaDemo struct {
 	fontImg   *ebiten.Image
 	fontAtlas *scrolling.Atlas
 
-	logoX       float64
+	titleMotion *motion.WaveClock
 	rasterTitle *composite.RasterTitle
 
 	posXi float64
@@ -1541,7 +1541,7 @@ type VivaDemo struct {
 }
 
 func NewVivaDemo() *VivaDemo {
-	d := &VivaDemo{logoX: 1.5}
+	d := &VivaDemo{}
 
 	pad := "       "
 	d.text1 = []rune(pad + "VIVA THE CAREBEARS!" + pad)
@@ -1558,6 +1558,10 @@ func (d *VivaDemo) Init() error {
 	}
 
 	var err error
+	d.titleMotion, err = motion.NewWaveClock(presets.VivaTitleMotion(demoWidth, 0))
+	if err != nil {
+		return err
+	}
 	img, _, err := image.Decode(bytes.NewReader(demo4LogoData))
 	if err != nil {
 		log.Printf("Error loading logo: %v", err)
@@ -1635,7 +1639,7 @@ func (d *VivaDemo) Update() error {
 	d.posRi += 0.005
 
 	// Title animation
-	d.logoX += 0.0125
+	d.titleMotion.Step()
 
 	// Raster animation
 	if d.rasterTitle != nil {
@@ -1682,8 +1686,7 @@ func (d *VivaDemo) Draw(screen *ebiten.Image) {
 	vector.DrawFilledRect(screen, 0, 0, demoWidth, 72, color.Black, false)
 
 	if d.rasterTitle != nil {
-		titleX := 64 + 800*math.Cos(d.logoX)
-		d.rasterTitle.DrawAt(screen, titleX, 14)
+		d.rasterTitle.DrawAt(screen, d.titleMotion.At(0), 14)
 	}
 
 	if d.logoFormation != nil {

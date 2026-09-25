@@ -50,3 +50,5 @@ Its ten logos now use the same `sprites.RecurrentFormation` with the panel's
 Its title uses the same `composite.RasterTitle` in direct clipped mode, without
 an intermediate title surface. Fourteen captures through wrap and title-cue
 boundaries remain identical in every channel.
+The horizontal title path uses the same `motion.WaveClock` with no initial
+hold; fourteen captures remain identical around the standalone release tick.
