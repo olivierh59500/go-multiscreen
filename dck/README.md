@@ -31,3 +31,6 @@ face changes remain pixel-identical.
 Its mountain background also uses the shared `composite.Bands` renderer and
 the TCB preset, with integer phase snapping before 2× movement. Twelve
 isolated captures around fractional speeds and wraps remain pixel-identical.
+The 32-row logo warp now uses `composite.ProfileImage` with the same native
+crop, phase reset and parent viewport mapping as the standalone screen. Nine
+isolated captures at section joins and wrap remain pixel-identical.

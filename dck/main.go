@@ -799,37 +799,20 @@ type TCBDemo struct {
 
 	logoCenter *ebiten.Image
 
-	stripVertices []ebiten.Vertex
-	stripIndices  []uint16
-
 	mountainBands *composite.Bands
+	logoRows      *composite.ProfileImage
 
 	scrollText string
 
-	logoSin    []float64
-	dcounter   int
 	centerFlip *sprites.AxisFlip
 }
 
 func NewTCBDemo() *TCBDemo {
-	d := &TCBDemo{
-		stripVertices: make([]ebiten.Vertex, 0, 64*4),
-		stripIndices:  make([]uint16, 0, 64*6),
-	}
-
-	d.initLogoSin()
+	d := &TCBDemo{}
 	d.initScrollText()
 	d.preprocessScrollText()
 
 	return d
-}
-
-func (d *TCBDemo) initLogoSin() {
-	var err error
-	d.logoSin, err = motion.CompileWaveTable(presets.TCBLogoWaveSections()...)
-	if err != nil {
-		panic(err)
-	}
 }
 
 func (d *TCBDemo) initScrollText() {
@@ -923,6 +906,17 @@ func (d *TCBDemo) Init() error {
 	if d.logo != nil {
 		d.logoCenter = d.logo.SubImage(image.Rect(114, 0, 193, 15)).(*ebiten.Image)
 	}
+	profile, err := motion.CompileWaveTable(presets.TCBLogoWaveSections()...)
+	if err != nil {
+		return err
+	}
+	logoConfig := presets.TCBLogoRowProfile(profile, 303)
+	logoConfig.ScaleX, logoConfig.ScaleY = 2, 2
+	logoConfig.OutputX, logoConfig.OutputY = 64, 60
+	d.logoRows, err = composite.NewProfileImage(d.logo.SubImage(image.Rect(0, 16, 303, 48)).(*ebiten.Image), logoConfig)
+	if err != nil {
+		return err
+	}
 	d.centerFlip, err = sprites.NewAxisFlip(sprites.AxisFlipConfig{
 		Front: d.logoCenter, Saw: &motion.SawToggleConfig{Start: 0, Velocity: .08, Boundary: 1, Restart: -1},
 		UseAnchor: true, AnchorX: 40, AnchorY: 8, BackMirrorY: true, BackMirrorShift: 16,
@@ -955,10 +949,7 @@ func (d *TCBDemo) Update() error {
 
 	d.mountainBands.Step()
 
-	d.dcounter++
-	if d.dcounter > len(d.logoSin)-80 {
-		d.dcounter = 0
-	}
+	d.logoRows.Advance()
 
 	d.centerFlip.Step()
 
@@ -983,19 +974,7 @@ func (d *TCBDemo) Draw(screen *ebiten.Image) {
 	mountainViewport := screen.SubImage(image.Rect(64, 60, 704, 460)).(*ebiten.Image)
 	d.mountainBands.DrawAt(mountainViewport, d.mountains, 64, 60)
 
-	d.stripVertices = d.stripVertices[:0]
-	d.stripIndices = d.stripIndices[:0]
-	for i := 0; i < 32; i++ {
-		xOffset := d.logoSin[d.dcounter+i]
-		d.stripVertices, d.stripIndices = appendTexturedQuad(
-			d.stripVertices, d.stripIndices,
-			float32(64+2*(8+xOffset)), float32(60+2*(96+i)), 606, 2,
-			0, float32(16+i), 303, 1,
-		)
-	}
-	if len(d.stripIndices) > 0 {
-		screen.DrawTriangles(d.stripVertices, d.stripIndices, d.logo, nil)
-	}
+	d.logoRows.Draw(screen)
 
 	parent := ebiten.GeoM{}
 	parent.Scale(2, 2)
