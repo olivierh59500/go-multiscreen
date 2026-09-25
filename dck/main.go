@@ -788,9 +788,8 @@ var demo2FontData = originalassets.DCKAssetDemo2FontData()
 const tcbScrollShaderSource = scrolling.PlaneShaderSource
 
 type TCBDemo struct {
-	planes        *scrolling.Planes
-	planeRenderer *scrolling.PlaneRenderer
-	initialized   bool
+	scroll      *scrolling.Scrolling
+	initialized bool
 
 	rasters   *ebiten.Image
 	mountains *ebiten.Image
@@ -810,7 +809,6 @@ type TCBDemo struct {
 func NewTCBDemo() *TCBDemo {
 	d := &TCBDemo{}
 	d.initScrollText()
-	d.preprocessScrollText()
 
 	return d
 }
@@ -846,14 +844,6 @@ func (d *TCBDemo) initScrollText() {
 		"REALLY SOMETHING .                    ^7 YOU WILL HAVE " +
 		"TO READ IN THE MAIN SCROLLTEXT FOR MORE GREETINGS....  BYE.............. " +
 		"                                             "
-}
-
-func (d *TCBDemo) preprocessScrollText() {
-	var err error
-	d.planes, err = scrolling.NewPlanes(presets.TCBPlanes(d.scrollText, 32))
-	if err != nil {
-		panic(err)
-	}
 }
 
 func (d *TCBDemo) Init() error {
@@ -899,7 +889,7 @@ func (d *TCBDemo) Init() error {
 	} else {
 		d.font = ebiten.NewImageFromImage(img)
 	}
-	if err = d.cacheFontTiles(); err != nil {
+	if err = d.initScroll(); err != nil {
 		return err
 	}
 
@@ -930,13 +920,15 @@ func (d *TCBDemo) Init() error {
 	return nil
 }
 
-func (d *TCBDemo) cacheFontTiles() error {
+func (d *TCBDemo) initScroll() error {
 	spec, _ := presets.FindFont("multiscreen-tcb")
 	metrics, err := spec.Build(d.font.Bounds())
 	if err != nil {
 		return err
 	}
-	d.planeRenderer, err = scrolling.NewPlaneRenderer(scrolling.Face{Atlas: d.font, Metrics: metrics}, d.rasters)
+	config := presets.TCBProjectedScroll(d.scrollText, 32, scrolling.Face{Atlas: d.font, Metrics: metrics}, d.rasters)
+	config.Projected.Draw = scrolling.PlaneDraw{OriginX: 64, OriginY: 60, ScaleX: 2, ScaleY: 2}
+	d.scroll, err = scrolling.New(config)
 	return err
 }
 
@@ -953,15 +945,7 @@ func (d *TCBDemo) Update() error {
 
 	d.centerFlip.Step()
 
-	d.scroll3D(4)
-
-	return nil
-}
-
-func (d *TCBDemo) scroll3D(speed float64) {
-	if err := d.planes.Step(speed); err != nil {
-		panic(err)
-	}
+	return d.scroll.Update(kit.Frame{})
 }
 
 func (d *TCBDemo) Draw(screen *ebiten.Image) {
@@ -985,9 +969,9 @@ func (d *TCBDemo) Draw(screen *ebiten.Image) {
 }
 
 func (d *TCBDemo) drawScroll3D(screen *ebiten.Image) {
-	if d.planeRenderer != nil {
+	if d.scroll != nil {
 		view := screen.SubImage(image.Rect(64, 60, 704, 460)).(*ebiten.Image)
-		d.planeRenderer.Draw(view, d.planes.Points(), scrolling.PlaneDraw{OriginX: 64, OriginY: 60, ScaleX: 2, ScaleY: 2})
+		d.scroll.Draw(view)
 	}
 }
 
