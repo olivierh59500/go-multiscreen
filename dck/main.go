@@ -801,8 +801,7 @@ type TCBDemo struct {
 	stripVertices []ebiten.Vertex
 	stripIndices  []uint16
 
-	bgSpeed [32]float64
-	bgPos   [32]float64
+	backgroundMotion *motion.WrapBank
 
 	scrollText string
 
@@ -819,12 +818,6 @@ func NewTCBDemo() *TCBDemo {
 		stripIndices:  make([]uint16, 0, 64*6),
 
 		rotAdd: 1,
-	}
-
-	speeds := []float64{8, 7.5, 7, 6.5, 6, 5.5, 5, 4.5, 4, 3.5, 3, 2.5, 2, 1.5, 1, 0.5}
-	for i, speed := range speeds {
-		d.bgSpeed[i] = speed
-		d.bgSpeed[i+16] = speed
 	}
 
 	d.initLogoSin()
@@ -889,6 +882,10 @@ func (d *TCBDemo) Init() error {
 	}
 
 	var err error
+	d.backgroundMotion, err = motion.NewWrapBank(presets.TCBMountainWrapConfig())
+	if err != nil {
+		return err
+	}
 
 	img, _, err := image.Decode(bytes.NewReader(demo2RastData))
 	if err != nil {
@@ -951,12 +948,7 @@ func (d *TCBDemo) Update() error {
 		}
 	}
 
-	for i := range d.bgPos {
-		d.bgPos[i] -= d.bgSpeed[i]
-		if d.bgPos[i] <= -256 {
-			d.bgPos[i] += 256
-		}
-	}
+	d.backgroundMotion.Step()
 
 	d.dcounter++
 	if d.dcounter > len(d.logoSin)-80 {
@@ -993,7 +985,7 @@ func (d *TCBDemo) Draw(screen *ebiten.Image) {
 	d.stripIndices = d.stripIndices[:0]
 
 	for i := 0; i < 16; i++ {
-		xPos := int(d.bgPos[i]) * 2
+		xPos := int(d.backgroundMotion.At(i)) * 2
 		yPos := i * 10
 
 		d.stripVertices, d.stripIndices = appendTexturedQuad(
@@ -1009,7 +1001,7 @@ func (d *TCBDemo) Draw(screen *ebiten.Image) {
 	}
 
 	for i := 16; i < 32; i++ {
-		xPos := int(d.bgPos[i]) * 2
+		xPos := int(d.backgroundMotion.At(i)) * 2
 		yPos := i*10 + 84
 
 		d.stripVertices, d.stripIndices = appendTexturedQuad(
@@ -1668,9 +1660,8 @@ type VivaDemo struct {
 	fontImg   *ebiten.Image
 	fontAtlas *scrolling.Atlas
 
-	logoX    float64
-	rasterY1 float64
-	rasterY2 float64
+	logoX        float64
+	rasterMotion *motion.WrapBank
 
 	scrollX1 float64
 	scrollX2 float64
@@ -1690,11 +1681,7 @@ type VivaDemo struct {
 }
 
 func NewVivaDemo() *VivaDemo {
-	d := &VivaDemo{
-		logoX:    1.5,
-		rasterY1: 0,
-		rasterY2: 72,
-	}
+	d := &VivaDemo{logoX: 1.5}
 
 	pad := "       "
 	d.text1 = []rune(pad + "VIVA THE CAREBEARS!" + pad)
@@ -1711,6 +1698,10 @@ func (d *VivaDemo) Init() error {
 	}
 
 	var err error
+	d.rasterMotion, err = motion.NewWrapBank(presets.VivaRasterWrapConfig())
+	if err != nil {
+		return err
+	}
 
 	img, _, err := image.Decode(bytes.NewReader(demo4LogoData))
 	if err != nil {
@@ -1857,14 +1848,7 @@ func (d *VivaDemo) Update() error {
 	d.logoX += 0.0125
 
 	// Raster animation
-	d.rasterY1 -= 2
-	d.rasterY2 -= 2
-	if d.rasterY1 <= -72 {
-		d.rasterY1 = 72
-	}
-	if d.rasterY2 <= -72 {
-		d.rasterY2 = 72
-	}
+	d.rasterMotion.Step()
 
 	d.loopCounter++
 	d.scrollX1 = advanceScroller4(d.scrollX1, d.text1)
@@ -1915,7 +1899,7 @@ func (d *VivaDemo) Draw(screen *ebiten.Image) {
 	titleViewport := screen.SubImage(image.Rect(0, 14, demoWidth, 86)).(*ebiten.Image)
 	if d.rasterImg != nil {
 		rasterScaleX := float64(demoWidth) / float64(d.rasterImg.Bounds().Dx())
-		for _, rasterY := range [...]float64{d.rasterY1, d.rasterY2, d.rasterY2 + 72} {
+		for _, rasterY := range [...]float64{d.rasterMotion.At(0), d.rasterMotion.At(1), d.rasterMotion.At(1) + 72} {
 			op := &ebiten.DrawImageOptions{}
 			op.GeoM.Scale(rasterScaleX, 2)
 			op.GeoM.Translate(titleX, 14+2*rasterY)
