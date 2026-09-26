@@ -12,7 +12,9 @@ provides the configured stereo PCM format. The demo keeps its playback level and
 ## Shared component effects
 
 The Phenomena panel uses the same `DNAFrames`, `SliceProgram`, `RecurrentRowWave`
-and gradient/silhouette materials as its standalone DCK demo. It starts at the
+and `ScalarStagePainter` gradient/silhouette/HSL materials as its standalone
+DCK demo. Its blue rectangle, logo, rasters and photon are one ordered DCK
+program with an explicit main-stage sample. It starts at the
 main screen and has no transition back to that demo's introduction, so its DCK
 panel no longer carries the unreachable intro states, text pages or photon
 texture. The standalone Phenomena intro remains available in its own repo.

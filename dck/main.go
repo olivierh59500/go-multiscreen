@@ -44,8 +44,9 @@ var demo1LogoData = originalassets.
 var demo1PhotonData = originalassets.DCKAssetDemo1PhotonData()
 
 type PhenomenaDemo struct {
-	dnaFrames   *scrolling.DNAFrames
-	initialized bool
+	dnaFrames    *scrolling.DNAFrames
+	initialized  bool
+	presentation *composite.ScalarStagePainter
 
 	imgFont       *ebiten.Image
 	imgLogo       *ebiten.Image
@@ -124,6 +125,11 @@ func (d *PhenomenaDemo) Init() error {
 	if err != nil {
 		return err
 	}
+	d.presentation, err = composite.NewScalarStagePainter(presets.MultiscreenPhenomenaMainMaterials(
+		d.imgLogo, d.rasterGrad800, d.imgPhotonMask))
+	if err != nil {
+		return err
+	}
 
 	// Init character frames
 	if err := d.initCharacterFrames(); err != nil {
@@ -198,29 +204,7 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 		return
 	}
 
-	screen.Fill(color.Black)
-	// Fill the middle section with the panel's dark blue background.
-	vector.DrawFilledRect(screen, 0, 162, 800, 375, color.RGBA{0x00, 0x01, 0x11, 0xFF}, false)
-
-	logoOp := &ebiten.DrawImageOptions{}
-	logoOp.GeoM.Translate(80, 0)
-	screen.DrawImage(d.imgLogo, logoOp)
-
-	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Translate(0, 129)
-	screen.DrawImage(d.rasterGrad800, op)
-
-	op.GeoM.Reset()
-	op.GeoM.Translate(0, 537)
-	screen.DrawImage(d.rasterGrad800, op)
-
-	op = &ebiten.DrawImageOptions{}
-	hue := d.hueMotion.At(0) / 360.0
-	r, g, b := palette.HSLToRGB(hue, 1.0, 0.5)
-	op.ColorScale.Scale(float32(r), float32(g), float32(b), 1)
-	op.GeoM.Translate(365, 555)
-	screen.DrawImage(d.imgPhotonMask, op)
-
+	d.presentation.DrawAt(screen, 0, 0, 1, d.hueMotion.At(0)/360)
 	d.drawScroller(screen)
 }
 
