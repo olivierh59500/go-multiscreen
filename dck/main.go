@@ -438,11 +438,8 @@ type CocoDemo struct {
 	// Shared harmonic backdrop with Coco's embedded texture phase.
 	roto *composite.RotozoomBackground
 
-	// Shared horizontal title clock; the banner itself draws directly.
-	titleMotion *motion.WaveClock
-
-	// Copper bars
-	copper *composite.CopperBars
+	// Shared direct title/copper band; it owns both animation clocks.
+	titleBand *composite.CopperTitleBand
 
 	// VBL counter
 	iteration int
@@ -452,10 +449,6 @@ func NewCocoDemo() *CocoDemo {
 	d := &CocoDemo{}
 
 	var err error
-	d.titleMotion, err = motion.NewWaveClock(presets.CocoTitleMotion(demoWidth))
-	if err != nil {
-		panic(err)
-	}
 	d.cubeTrain, err = effects.NewSolidCubeTrain(presets.MultiscreenCocoCubeTrain(demoWidth, demoHeight, 40, nbCubes3))
 	if err != nil {
 		panic(err)
@@ -482,7 +475,10 @@ func (d *CocoDemo) Init() error {
 		log.Printf("Error loading bars: %v", err)
 	} else {
 		d.barsImg = ebiten.NewImageFromImage(img)
-		d.copper, err = composite.NewCopperBars(presets.BilizirCopperBars(d.barsImg, 72, composite.CopperImages, composite.MaskedClock))
+	}
+	if d.titleImg != nil {
+		d.titleBand, err = composite.NewCopperTitleBand(presets.CocoTitleBand(
+			d.titleImg, d.barsImg, demoWidth, composite.CopperTitleDirect))
 		if err != nil {
 			return err
 		}
@@ -551,9 +547,8 @@ func (d *CocoDemo) Update() error {
 		}
 	}
 
-	// Update copper bars
-	if d.copper != nil {
-		if err := d.copper.Update(kit.Frame{}); err != nil {
+	if d.titleBand != nil {
+		if err := d.titleBand.Advance(1); err != nil {
 			return err
 		}
 	}
@@ -574,7 +569,6 @@ func (d *CocoDemo) Update() error {
 		}
 	}
 
-	d.titleMotion.Step()
 	return nil
 }
 
@@ -603,28 +597,10 @@ func (d *CocoDemo) Draw(screen *ebiten.Image) {
 	// 4. Batched 3D cubes
 	d.cubeTrain.Draw(screen)
 
-	// 5. Title logo with copper bars on top
-	d.drawTitleWithCopperbars3(screen)
-}
-
-func (d *CocoDemo) drawTitleWithCopperbars3(dst *ebiten.Image) {
-	if d.titleImg == nil {
-		return
+	// 5. Title logo with copper bars on top.
+	if d.titleBand != nil {
+		d.titleBand.Draw(screen)
 	}
-
-	vector.DrawFilledRect(dst, 0, 0, demoWidth, 72, color.Black, false)
-	if d.copper != nil {
-		d.copper.Draw(dst)
-	}
-
-	titleX := d.titleMotion.At(0)
-	titleH := float64(d.titleImg.Bounds().Dy())
-	scaleY := 72.0 / titleH
-
-	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Scale(1.0, scaleY)
-	op.GeoM.Translate(titleX, 0)
-	dst.DrawImage(d.titleImg, op)
 }
 
 // ==================== VIVA TCB DEMO (Demo4) ====================

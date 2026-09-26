@@ -37,9 +37,10 @@ the local cursor and triangle-building functions have been removed.
 The sixteen DMA logos now use `sprites.Group` with a 4 × 4 grid and a shared
 recurrent harmonic translation. DCK owns the four phase clocks and their
 1,024-tick reanchor; the panel supplies only its image and rendering order.
-The top title uses the shared `motion.WaveClock` cosine path. The black banner,
-copper bars and logo still draw directly into the panel to avoid another GPU
-surface.
+The top title uses the complete `composite.CopperTitleBand` in direct mode.
+Its black banner, masked copper phases and cosine title still draw into the
+panel without another GPU surface; the standalone Coco screen uses the same
+effect in retained-surface mode.
 
 See the [DCK effect configuration guide](../../../lib/democonstructionkit/docs/EFFECT_OPTIONS.md) for the shared API and examples.
 
