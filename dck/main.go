@@ -133,7 +133,6 @@ type PhenomenaDemo struct {
 
 	// Animation variables
 	t              float64
-	color          float64
 	percent        float64
 	blackRectWidth float64
 	blackRectShow  bool
@@ -145,6 +144,7 @@ type PhenomenaDemo struct {
 	rowWave      *motion.RecurrentRowWave
 	dnaDraw      scrolling.DNADrawConfig
 	photonMotion *motion.GravityBounce
+	hueMotion    *motion.WrapBank
 }
 
 const charsetPhenomena = presets.PhenomenaAlphabet
@@ -184,6 +184,10 @@ func NewPhenomenaDemo() *PhenomenaDemo {
 	}
 	d.rowWave = wave
 	d.photonMotion, err = motion.NewGravityBounce(presets.PhenomenaPhotonBounce())
+	if err != nil {
+		panic(err)
+	}
+	d.hueMotion, err = motion.NewWrapBank(presets.PhenomenaPhotonHueCycle())
 	if err != nil {
 		panic(err)
 	}
@@ -381,10 +385,7 @@ func (d *PhenomenaDemo) Update() error {
 			d.director.Signal("photon-landed")
 		}
 	case StateMainDemoPhe:
-		d.color += 1.0 / 3.0
-		if d.color > 360 {
-			d.color = 0
-		}
+		d.hueMotion.Step()
 		if err := d.sliceProgram.Step(); err != nil {
 			return err
 		}
@@ -519,7 +520,7 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 
 		// Draw photon with color cycling (centered)
 		op = &ebiten.DrawImageOptions{}
-		hue := d.color / 360.0
+		hue := d.hueMotion.At(0) / 360.0
 		r, g, b := palette.HSLToRGB(hue, 1.0, 0.5)
 		op.ColorScale.Scale(float32(r), float32(g), float32(b), 1)
 		op.GeoM.Translate(365, 555) // Centered: 285 + 80 = 365, bottom adjusted
