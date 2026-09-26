@@ -16,6 +16,7 @@ import (
 	"github.com/olivierh59500/democonstructionkit/scrolling"
 	"github.com/olivierh59500/democonstructionkit/sound"
 	"github.com/olivierh59500/democonstructionkit/sprites"
+	"github.com/olivierh59500/democonstructionkit/timeline"
 
 	_ "image/png"
 	"log"
@@ -114,6 +115,7 @@ type PhenomenaDemo struct {
 	// Demo state
 	state       int
 	initialized bool
+	director    *timeline.ScalarStages
 
 	// Images
 	imgRasterbar  *ebiten.Image
@@ -150,14 +152,14 @@ const charsetPhenomena = presets.PhenomenaAlphabet
 const scrollMessage = `           THIS IS IMPOSSIBLE!            WHAT IS?               THIS IS!!!                    ...SO, ANOTHER DEMO FROM PHENOMENA HAS REACHED YOU...    THIS TIME WITH CODING BY                PHOTON!                ^  RASTA MUSIC BY                    FIREFOX!                &    AND SUPER GFX BY                       TERMINATOR               #  ...SO, SLAYER! HOW DO YOU LIKE @MY@ SCROLLER?  IT'S MUCH IMPOSSIBLER THAN YOURS!    ...   SO DE SO!          DOES ANYONE HAVE A PROGRAM CALLED 'PAGE RENDER 3D'? THEN CONTACT OUR NEW GFX ARTIST AT          0492-41027               % AND ASK FOR MIKAEL. NEWS NEWS NEWS NEWS   !!! LOOK OUT FOR PHENOMENA'S NEW DISK MAG CALLED ' TRANSMISSION ' ! ! ! ! IT'S A MAG ESPECIALLY MADE FOR ALL YOU CODERS OUT THERE, COMPLETE WITH CODER / DEMO / CRACK TOP-TEN,ARTICLES ABOUT CODING / CRACKING, AND SOURCES, ETC,ETC...         HERE'S MY TOP-FIVE DEMO GROUPS 1. SCOOPEX  -SLAYER IS WORKING HARD AND HIS M.H. DEMO IS STILL UNBEATEN-  ...  2. CRYPTOBURNERS  -NICE MD 2 BUT SLOOOW VECTORS-  ... 3. RSI/PARADOX  -NICE DEMOS LATELY, EXCEPT FOR THE 'FOLLOW ME' CRAP-  ...  4. KEFRENS  -ALL YOUR LATEST DEMOS HAVE BEEN PROFESSIONAL!-  ...  5. THE LINK  -ALWAYS COOL IDEAS,GIVE US SOME MORE-  ...  OF COURSE, PHENOMENA IS EXCLUDED FROM THIS LIST...        NOW OVER TO SOME INTERNAL GREETS...  @     BIG 2A-FINISH YOUR DEMO AND BUY AN A500!   @   CORE-GET YOUR HANDS ON A WORKING AMIGA!   @   DANKO-GET BUSY!   @   KLUTTAS O SPIRIT-WAKE UP FROM YOUR COMA!!!!   @   RAVE-SAME TO YOU!       ...     AND NOW, TIME FOR SOME OTHER GREETS... THEY GO TO --- CONAN/TPL-MAKE A GOOD DEMO AND JOIN ANOTHER GROUP!   @   KALLE BALLE/TSL - EVER THOUGHT ABOUT CHANGING YOUR NAME????   @   HAVOK/ECSTASY-JOIN US! I'M JUST A PHONECALL AWAY - 0381-11344 @   MAHONEY/NS-TRY TAKING SOME IDEAS FROM NT 1.2!  @   UNCLE TOM/RAZOR-STOP DRAWING AND DO SOME MUSIC @   SLAYER/SCX-AND ALL OTHER GOOD CODERS-CALL ME FOR SOME COOL TECH-TALK    0381-11344   ZEUS/ADEPT-GOOD LUCK AND CODE HARD!       ---     NOW I DON'T HAVE VERY MUCH ELSE TO SAY, EXCEPT....                    BYE!             @@@@@@@@@@@@@                `
 
 const (
-	StateTextPage1Phe = iota
-	StateTextPage2Phe
-	StateShowLogoPhe
-	StateShowUpperRasterbarPhe
-	StateShowLowerRasterbarPhe
-	StateDropPhotonPhe
-	StatePhotonFadeToRedPhe
-	StateMainDemoPhe
+	StateTextPage1Phe          = presets.PhenomenaTextPage1
+	StateTextPage2Phe          = presets.PhenomenaTextPage2
+	StateShowLogoPhe           = presets.PhenomenaShowLogo
+	StateShowUpperRasterbarPhe = presets.PhenomenaShowUpperRaster
+	StateShowLowerRasterbarPhe = presets.PhenomenaShowLowerRaster
+	StateDropPhotonPhe         = presets.PhenomenaDropPhoton
+	StatePhotonFadeToRedPhe    = presets.PhenomenaPhotonFade
+	StateMainDemoPhe           = presets.PhenomenaMain
 )
 
 func NewPhenomenaDemo() *PhenomenaDemo {
@@ -182,6 +184,10 @@ func NewPhenomenaDemo() *PhenomenaDemo {
 	}
 	d.rowWave = wave
 	d.photonMotion, err = motion.NewGravityBounce(presets.PhenomenaPhotonBounce())
+	if err != nil {
+		panic(err)
+	}
+	d.director, err = timeline.NewScalarStages(presets.PhenomenaPresentation(StateMainDemoPhe))
 	if err != nil {
 		panic(err)
 	}
@@ -370,70 +376,19 @@ func (d *PhenomenaDemo) Update() error {
 	}
 
 	switch d.state {
-	case StateTextPage1Phe:
-		d.rasterbarY += 1.5
-		if d.rasterbarY >= 340 {
-			d.rasterbarY = 0
-			d.percent = 0
-			d.state = StateTextPage2Phe
-		}
-
-	case StateTextPage2Phe:
-		d.percent += d.direction * 1
-		if d.percent > 200 {
-			d.direction = -1
-			d.percent = 100
-		}
-		if d.percent <= 0 && d.direction == -1 {
-			d.percent = 0
-			d.state = StateShowLogoPhe
-		}
-
-	case StateShowLogoPhe:
-		d.percent += 4
-		if d.percent >= 200 {
-			d.percent = 0
-			d.state = StateShowUpperRasterbarPhe
-		}
-
-	case StateShowUpperRasterbarPhe:
-		d.percent += 4
-		if d.percent >= 100 {
-			d.percent = 0
-			d.state = StateShowLowerRasterbarPhe
-		}
-
-	case StateShowLowerRasterbarPhe:
-		d.percent += 4
-		if d.percent >= 100 {
-			d.percent = 0
-			d.state = StateDropPhotonPhe
-		}
-
 	case StateDropPhotonPhe:
 		if d.photonMotion.Step() {
-			d.percent = 100
-			d.state = StatePhotonFadeToRedPhe
+			d.director.Signal("photon-landed")
 		}
-
-	case StatePhotonFadeToRedPhe:
-		d.percent -= 4
-		if d.percent < 50 {
-			d.percent = 0
-			d.state = StateMainDemoPhe
-		}
-
 	case StateMainDemoPhe:
 		d.color += 1.0 / 3.0
 		if d.color > 360 {
 			d.color = 0
 		}
-
 		if err := d.sliceProgram.Step(); err != nil {
 			return err
 		}
 		d.t += 0.30
-
 		if d.blackRectShow {
 			d.blackRectWidth -= 8
 			if d.blackRectWidth < 0 {
@@ -442,6 +397,16 @@ func (d *PhenomenaDemo) Update() error {
 			}
 		}
 	}
+	previousStage := d.state
+	d.director.Step()
+	pose := d.director.State()
+	d.state = pose.Stage
+	if previousStage == StateTextPage1Phe {
+		d.rasterbarY = pose.Value
+	} else {
+		d.percent = pose.Value
+	}
+	d.direction = pose.Direction
 
 	return nil
 }
