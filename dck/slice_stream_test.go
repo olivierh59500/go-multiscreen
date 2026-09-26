@@ -122,15 +122,6 @@ func TestSharedSliceTransportMatchesOriginalThroughControlsAndLoops(t *testing.T
 	}
 	count := len(scrollMessage)*8*3 + 2000
 	for tick := 0; tick < count; tick++ {
-		if !scene.pause {
-			scene.scrollMessage(1)
-		} else {
-			scene.pauseTime--
-			if scene.pauseTime == 0 {
-				scene.pause = false
-				scene.rotSpeed = .35
-			}
-		}
 		if !reference.pause {
 			reference.scrollMessage(1)
 		} else {
@@ -140,14 +131,17 @@ func TestSharedSliceTransportMatchesOriginalThroughControlsAndLoops(t *testing.T
 				reference.rotSpeed = .35
 			}
 		}
-		scene.renderNextFrames(scene.rotSpeed)
+		if err := scene.sliceProgram.Step(); err != nil {
+			t.Fatal(err)
+		}
+		sceneState := scene.sliceProgram.Clock().State()
 		reference.renderNextFrames(reference.rotSpeed)
-		token, strip := scene.sliceStream.Cursor()
-		if token != reference.msgIndex || strip != reference.sliceCount || scene.sliceStream.Head() != reference.scrollHead || scene.pause != reference.pause || scene.pauseTime != reference.pauseTime || scene.rotSpeed != reference.rotSpeed || scene.scrollerRotation != reference.scrollerRotation {
+		token, strip := scene.sliceProgram.Stream().Cursor()
+		if token != reference.msgIndex || strip != reference.sliceCount || scene.sliceProgram.Stream().Head() != reference.scrollHead || sceneState.Paused != reference.pause || sceneState.PauseTicks != reference.pauseTime || sceneState.RotationStep != reference.rotSpeed || sceneState.Rotation != reference.scrollerRotation {
 			t.Fatalf("transport or cue changed at tick %d", tick)
 		}
-		if tick%97 == 0 || scene.pause {
-			if !slices.Equal(scene.sliceStream.Slices(), reference.scrollChars[:]) {
+		if tick%97 == 0 || sceneState.Paused {
+			if !slices.Equal(scene.sliceProgram.Stream().Slices(), reference.scrollChars[:]) {
 				t.Fatalf("strip history changed at tick %d", tick)
 			}
 		}

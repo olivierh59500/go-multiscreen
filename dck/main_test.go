@@ -15,6 +15,8 @@ import (
 	"github.com/olivierh59500/democonstructionkit/scrolling"
 )
 
+var phenomenaWaveSinStep, phenomenaWaveCosStep = math.Sincos(1.0 / 36.0)
+
 func TestTCBScrollShaderCompiles(t *testing.T) {
 	shader, err := ebiten.NewShader([]byte(tcbScrollShaderSource))
 	if err != nil {

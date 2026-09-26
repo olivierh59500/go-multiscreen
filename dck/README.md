@@ -11,7 +11,7 @@ provides the configured stereo PCM format. The demo keeps its playback level and
 
 ## Shared component effects
 
-The Phenomena and TCB scenes use the same `DNAFrames`, `Planes` and `PlaneRenderer` implementations as their standalone DCK demos. Their original timing, raster palettes and the multiscreen camera remain local.
+The Phenomena and TCB scenes use the same `DNAFrames`, `SliceProgram`, `RecurrentRowWave`, `Planes` and `PlaneRenderer` implementations as their standalone DCK demos. Their raster palettes, authored layer order and the multiscreen camera remain local.
 
 The embedded Coco panel now shares `composite.CopperBars` with Bilizir and
 standalone Coco. Its integer clocks and 36 cached image strips remain visually

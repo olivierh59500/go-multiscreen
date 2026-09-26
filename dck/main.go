@@ -18,7 +18,6 @@ import (
 
 	_ "image/png"
 	"log"
-	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -130,27 +129,21 @@ type PhenomenaDemo struct {
 	rasterGrad800 *ebiten.Image
 
 	// Animation variables
-	t                float64
-	pause            bool
-	pauseTime        int
-	scrollSpeed      int
-	rotSpeed         float64
-	color            float64
-	percent          float64
-	blackRectWidth   float64
-	blackRectShow    bool
-	photonY          float64
-	photonGravity    float64
-	photonBounce     float64
-	rasterbarY       float64
-	direction        float64
-	scrollerRotation float64
+	t              float64
+	color          float64
+	percent        float64
+	blackRectWidth float64
+	blackRectShow  bool
+	photonY        float64
+	photonGravity  float64
+	photonBounce   float64
+	rasterbarY     float64
+	direction      float64
 
 	// Scroller data
-	sliceStream *scrolling.SliceStream
-	sineOffsets [240]float64
-	rowWave     *motion.RecurrentRowWave
-	dnaDraw     scrolling.DNADrawConfig
+	sliceProgram *scrolling.SliceProgram
+	rowWave      *motion.RecurrentRowWave
+	dnaDraw      scrolling.DNADrawConfig
 }
 
 type GradientStop struct {
@@ -183,8 +176,6 @@ var (
 
 const charsetPhenomena = presets.PhenomenaAlphabet
 
-var phenomenaWaveSinStep, phenomenaWaveCosStep = math.Sincos(1.0 / 36.0)
-
 const scrollMessage = `           THIS IS IMPOSSIBLE!            WHAT IS?               THIS IS!!!                    ...SO, ANOTHER DEMO FROM PHENOMENA HAS REACHED YOU...    THIS TIME WITH CODING BY                PHOTON!                ^  RASTA MUSIC BY                    FIREFOX!                &    AND SUPER GFX BY                       TERMINATOR               #  ...SO, SLAYER! HOW DO YOU LIKE @MY@ SCROLLER?  IT'S MUCH IMPOSSIBLER THAN YOURS!    ...   SO DE SO!          DOES ANYONE HAVE A PROGRAM CALLED 'PAGE RENDER 3D'? THEN CONTACT OUR NEW GFX ARTIST AT          0492-41027               % AND ASK FOR MIKAEL. NEWS NEWS NEWS NEWS   !!! LOOK OUT FOR PHENOMENA'S NEW DISK MAG CALLED ' TRANSMISSION ' ! ! ! ! IT'S A MAG ESPECIALLY MADE FOR ALL YOU CODERS OUT THERE, COMPLETE WITH CODER / DEMO / CRACK TOP-TEN,ARTICLES ABOUT CODING / CRACKING, AND SOURCES, ETC,ETC...         HERE'S MY TOP-FIVE DEMO GROUPS 1. SCOOPEX  -SLAYER IS WORKING HARD AND HIS M.H. DEMO IS STILL UNBEATEN-  ...  2. CRYPTOBURNERS  -NICE MD 2 BUT SLOOOW VECTORS-  ... 3. RSI/PARADOX  -NICE DEMOS LATELY, EXCEPT FOR THE 'FOLLOW ME' CRAP-  ...  4. KEFRENS  -ALL YOUR LATEST DEMOS HAVE BEEN PROFESSIONAL!-  ...  5. THE LINK  -ALWAYS COOL IDEAS,GIVE US SOME MORE-  ...  OF COURSE, PHENOMENA IS EXCLUDED FROM THIS LIST...        NOW OVER TO SOME INTERNAL GREETS...  @     BIG 2A-FINISH YOUR DEMO AND BUY AN A500!   @   CORE-GET YOUR HANDS ON A WORKING AMIGA!   @   DANKO-GET BUSY!   @   KLUTTAS O SPIRIT-WAKE UP FROM YOUR COMA!!!!   @   RAVE-SAME TO YOU!       ...     AND NOW, TIME FOR SOME OTHER GREETS... THEY GO TO --- CONAN/TPL-MAKE A GOOD DEMO AND JOIN ANOTHER GROUP!   @   KALLE BALLE/TSL - EVER THOUGHT ABOUT CHANGING YOUR NAME????   @   HAVOK/ECSTASY-JOIN US! I'M JUST A PHONECALL AWAY - 0381-11344 @   MAHONEY/NS-TRY TAKING SOME IDEAS FROM NT 1.2!  @   UNCLE TOM/RAZOR-STOP DRAWING AND DO SOME MUSIC @   SLAYER/SCX-AND ALL OTHER GOOD CODERS-CALL ME FOR SOME COOL TECH-TALK    0381-11344   ZEUS/ADEPT-GOOD LUCK AND CODE HARD!       ---     NOW I DON'T HAVE VERY MUCH ELSE TO SAY, EXCEPT....                    BYE!             @@@@@@@@@@@@@                `
 
 const (
@@ -200,24 +191,22 @@ const (
 
 func NewPhenomenaDemo() *PhenomenaDemo {
 	d := &PhenomenaDemo{
-		state:            StateMainDemoPhe, // Start directly at main demo
-		pauseTime:        250,
-		rotSpeed:         0.35,
-		scrollSpeed:      1,
-		blackRectWidth:   800,
-		blackRectShow:    false, // No black rect at start
-		photonY:          184,
-		photonBounce:     -9.50,
-		rasterbarY:       -40,
-		direction:        1,
-		scrollerRotation: 0,
+		state:          StateMainDemoPhe, // Start directly at main demo
+		blackRectWidth: 800,
+		blackRectShow:  false, // No black rect at start
+		photonY:        184,
+		photonBounce:   -9.50,
+		rasterbarY:     -40,
+		direction:      1,
 	}
-
-	for i := range d.sineOffsets {
-		d.sineOffsets[i] = math.Sin(float64(i)*0.05) * 15
+	programConfig, err := presets.PhenomenaDNAProgram(scrollMessage, charToFontIndexPhe)
+	if err != nil {
+		panic(err)
 	}
-
-	d.initSliceStream()
+	d.sliceProgram, err = scrolling.NewSliceProgram(programConfig)
+	if err != nil {
+		panic(err)
+	}
 	wave, err := motion.NewRecurrentRowWave(presets.PhenomenaDNARows())
 	if err != nil {
 		panic(err)
@@ -279,9 +268,8 @@ func (d *PhenomenaDemo) Init() error {
 	d.initCharacterFrames()
 
 	// Bring message to start
-	for i := 0; i < 320; i++ {
-		d.scrollMessage(1)
-		d.renderNextFrames(d.rotSpeed)
+	if err := d.sliceProgram.Warmup(320, 1); err != nil {
+		return err
 	}
 
 	d.initialized = true
@@ -428,60 +416,6 @@ func (d *PhenomenaDemo) initCharacterFrames() {
 	d.cnvFrames = d.dnaFrames.Image
 }
 
-func (d *PhenomenaDemo) initSliceStream() {
-	tokens := make([]scrolling.SliceToken, 0, len(scrollMessage))
-	for _, ch := range scrollMessage {
-		if ch == '^' || ch == '#' || ch == '&' || ch == '%' {
-			tokens = append(tokens, scrolling.SliceToken{Control: string(ch)})
-			continue
-		}
-		glyph, ok := charToFontIndexPhe(ch)
-		if !ok {
-			glyph = 0
-		}
-		tokens = append(tokens, scrolling.SliceToken{Glyph: glyph, Width: 16})
-	}
-	var err error
-	d.sliceStream, err = scrolling.NewSliceStream(scrolling.SliceStreamConfig{Tokens: tokens, Capacity: len(d.sineOffsets), SliceWidth: 2, Repeat: true, LoopStart: 90})
-	if err != nil {
-		panic(err)
-	}
-}
-
-func (d *PhenomenaDemo) scrollMessage(speed int) {
-	d.sliceStream.Step(speed, func(event scrolling.SliceControl) bool {
-		d.pause = true
-		switch event.Name {
-		case "^":
-			d.pauseTime = 275
-			d.rotSpeed = -1
-		case "&":
-			d.pauseTime = 275
-			d.rotSpeed = 1
-		case "#":
-			d.pauseTime = 250
-			d.rotSpeed = -1
-		case "%":
-			d.pauseTime = 225
-			d.rotSpeed = -1
-		}
-		return false
-	})
-}
-
-func (d *PhenomenaDemo) renderNextFrames(speed float64) {
-	d.scrollerRotation += speed
-	if d.scrollerRotation >= 30 {
-		d.scrollerRotation -= 30
-	}
-	if d.scrollerRotation < 0 {
-		d.scrollerRotation += 30
-	}
-	if err := d.sliceStream.SetFrames(d.scrollerRotation, d.sineOffsets[:], 30); err != nil {
-		panic(err)
-	}
-}
-
 func (d *PhenomenaDemo) Update() error {
 	if !d.initialized {
 		if err := d.Init(); err != nil {
@@ -555,19 +489,10 @@ func (d *PhenomenaDemo) Update() error {
 			d.color = 0
 		}
 
-		if !d.pause {
-			d.scrollMessage(d.scrollSpeed)
-		} else {
-			d.pauseTime--
-			if d.pauseTime == 0 {
-				d.pause = false
-				d.rotSpeed = 0.35
-				d.scrollSpeed = 1
-			}
+		if err := d.sliceProgram.Step(); err != nil {
+			return err
 		}
-
 		d.t += 0.30
-		d.renderNextFrames(d.rotSpeed)
 
 		if d.blackRectShow {
 			d.blackRectWidth -= 8
@@ -708,7 +633,7 @@ func (d *PhenomenaDemo) drawScroller(screen *ebiten.Image) {
 	if err := d.rowWave.Begin(d.t); err != nil {
 		panic(err)
 	}
-	d.dnaFrames.DrawSlices(screen, d.sliceStream.Slices(), d.sliceStream.Head(), d.dnaDraw)
+	d.sliceProgram.Draw(screen, d.dnaFrames, d.dnaDraw)
 }
 
 func hslToRGB(h, s, l float64) (float64, float64, float64) {

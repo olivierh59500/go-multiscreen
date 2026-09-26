@@ -30,15 +30,6 @@ func (c *dnaRenderCheck) Update() error {
 	if c.err != nil {
 		return c.err
 	}
-	if !c.scene.pause {
-		c.scene.scrollMessage(1)
-	} else {
-		c.scene.pauseTime--
-		if c.scene.pauseTime == 0 {
-			c.scene.pause = false
-			c.scene.rotSpeed = .35
-		}
-	}
 	if !c.reference.pause {
 		c.reference.scrollMessage(1)
 	} else {
@@ -48,7 +39,9 @@ func (c *dnaRenderCheck) Update() error {
 			c.reference.rotSpeed = .35
 		}
 	}
-	c.scene.renderNextFrames(c.scene.rotSpeed)
+	if err := c.scene.sliceProgram.Step(); err != nil {
+		return err
+	}
 	c.reference.renderNextFrames(c.reference.rotSpeed)
 	c.scene.t += .30
 	c.frame++
