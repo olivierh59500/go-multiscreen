@@ -20,6 +20,7 @@ type dnaRenderCheck struct {
 	scene            *PhenomenaDemo
 	reference        *sliceReference
 	frame, checked   int
+	referenceTime    float64
 	actual, expected *ebiten.Image
 	a, b             []byte
 	err              error
@@ -43,7 +44,10 @@ func (c *dnaRenderCheck) Update() error {
 		return err
 	}
 	c.reference.renderNextFrames(c.reference.rotSpeed)
-	c.scene.t += .30
+	c.referenceTime += .30
+	if err := c.scene.rowWave.AdvanceFrame(); err != nil {
+		return err
+	}
 	c.frame++
 	return nil
 }
@@ -53,9 +57,13 @@ func (c *dnaRenderCheck) Draw(dst *ebiten.Image) {
 	}
 	c.actual.Clear()
 	c.expected.Clear()
+	if c.scene.rowWave.FrameTime() != c.referenceTime {
+		c.err = fmt.Errorf("DNA row-wave clock changed at frame %d", c.frame)
+		return
+	}
 	c.scene.drawScroller(c.actual)
-	t2 := c.scene.t
-	ws, wc := math.Sincos(5*10.50 + c.scene.t/6)
+	t2 := c.referenceTime
+	ws, wc := math.Sincos(5*10.50 + c.referenceTime/6)
 	c.scene.dnaFrames.DrawSlices(c.expected, c.reference.scrollChars[:], c.reference.scrollHead, scrolling.DNADrawConfig{SliceWidth: 2, ScaleX: 1.67, ScaleY: 1.875, OriginY: 195, Y: func(i int) float64 {
 		y := 80.
 		if t2 > 5*50-float64(i)*.0033 {

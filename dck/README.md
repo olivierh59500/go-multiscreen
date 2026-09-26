@@ -18,6 +18,9 @@ program with an explicit main-stage sample. It starts at the
 main screen and has no transition back to that demo's introduction, so its DCK
 panel no longer carries the unreachable intro states, text pages or photon
 texture. The standalone Phenomena intro remains available in its own repo.
+The row wave now keeps its own 0.30-step scene clock; the panel no longer
+accumulates the same time separately. The opt-in GPU comparator checks its
+independent reference clock and strips at eleven frames through 48,000.
 The TCB panel shares the `Planes` and `PlaneRenderer` implementations with its
 standalone DCK demo. Artwork and authored layer order remain local.
 `composite.SceneTour` owns the camera's held views, easing, zoom, visibility

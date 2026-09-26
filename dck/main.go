@@ -53,8 +53,6 @@ type PhenomenaDemo struct {
 	imgPhotonMask *ebiten.Image
 	rasterGrad800 *ebiten.Image
 
-	t float64
-
 	// Scroller data
 	sliceProgram *scrolling.SliceProgram
 	rowWave      *motion.RecurrentRowWave
@@ -194,7 +192,9 @@ func (d *PhenomenaDemo) Update() error {
 	if err := d.sliceProgram.Step(); err != nil {
 		return err
 	}
-	d.t += .30
+	if err := d.rowWave.AdvanceFrame(); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -209,7 +209,7 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 }
 
 func (d *PhenomenaDemo) drawScroller(screen *ebiten.Image) {
-	if err := d.rowWave.Begin(d.t); err != nil {
+	if err := d.rowWave.BeginFrame(); err != nil {
 		panic(err)
 	}
 	d.sliceProgram.Draw(screen, d.dnaFrames, d.dnaDraw)
