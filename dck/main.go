@@ -764,13 +764,6 @@ func appendTexturedQuad(vertices []ebiten.Vertex, indices []uint16, dstX, dstY, 
 	return vertices, indices
 }
 
-// drawRepeatingRotozoom renders an infinitely repeated texture directly into
-// the destination. This replaces the very large pre-tiled background images
-// while preserving the same affine texture mapping.
-func drawRepeatingRotozoom(dst, texture *ebiten.Image, cx, cy, zoom, rotation, px, py float64, brightness float32) {
-	composite.Repeat(dst, texture, composite.Repetition{CenterX: cx, CenterY: cy, Zoom: zoom, Rotation: rotation, PhaseX: px, PhaseY: py, Color: [4]float32{brightness, brightness, brightness, 1}})
-}
-
 // ==================== TCB DEMO (Demo2) ====================
 
 var demo2RastData = originalassets.
@@ -1010,10 +1003,8 @@ type CocoDemo struct {
 	scrollIndices  []uint16
 	lastTextOffset int
 
-	// Rotozoom
-	posXi float64
-	posZi float64
-	posRi float64
+	// Shared harmonic backdrop with Coco's embedded texture phase.
+	roto *composite.RotozoomBackground
 
 	// Title logo animation
 	logoX float64
@@ -1083,6 +1074,14 @@ func (d *CocoDemo) Init() error {
 		log.Printf("Error loading coco: %v", err)
 	} else {
 		d.cocoImg = ebiten.NewImageFromImage(img)
+		program, err := presets.NewVivaRotozoom(presets.MultiscreenCocoRotozoom(demoWidth, demoHeight))
+		if err != nil {
+			return err
+		}
+		d.roto, err = composite.NewRotozoomBackground(composite.RotozoomBackgroundConfig{Image: d.cocoImg, Program: program})
+		if err != nil {
+			return err
+		}
 	}
 
 	img, _, err = image.Decode(bytes.NewReader(demo3DmaLogoData))
@@ -1158,10 +1157,11 @@ func (d *CocoDemo) Update() error {
 		d.dmaSprites[i].y = centerY + offsetY + baseY
 	}
 
-	// Update rotozoom
-	d.posXi += 0.008
-	d.posZi += 0.003
-	d.posRi += 0.005
+	if d.roto != nil {
+		if err := d.roto.Update(kit.Frame{}); err != nil {
+			return err
+		}
+	}
 
 	// Update title logo
 	d.logoX += 0.0125
@@ -1176,7 +1176,9 @@ func (d *CocoDemo) Draw(screen *ebiten.Image) {
 	screen.Fill(color.RGBA{0x00, 0x00, 0x30, 0xFF})
 
 	// 1. Rotozoom background
-	d.drawRotozoom3(screen)
+	if d.roto != nil {
+		d.roto.Draw(screen)
+	}
 
 	// 2. Scrolling text with distortion
 	d.drawScrollText3(screen)
@@ -1189,20 +1191,6 @@ func (d *CocoDemo) Draw(screen *ebiten.Image) {
 
 	// 5. Title logo with copper bars on top
 	d.drawTitleWithCopperbars3(screen)
-}
-
-func (d *CocoDemo) drawRotozoom3(dst *ebiten.Image) {
-	zoom := 0.5 + math.Abs(math.Sin(d.posZi)*2.5)
-	rot := 360.0 / 4.0 * math.Cos(d.posRi*4-math.Cos(d.posRi-0.01)) * 0.3 * math.Pi / 180
-
-	posXCurve := math.Cos(d.posXi - 0.1)
-	oscX := (float64(demoWidth) / 4) * math.Cos(d.posXi*4-posXCurve)
-	oscY := (float64(demoHeight) / 2.7) * -math.Sin(d.posXi*2.3-posXCurve)
-
-	centerX := float64(demoWidth)/2 + oscX
-	centerY := float64(demoHeight)/2 + oscY
-
-	drawRepeatingRotozoom(dst, d.cocoImg, centerX, centerY, zoom, rot, demoWidth*4, demoHeight*4, 0.5)
 }
 
 func (d *CocoDemo) drawDMALogos3(dst *ebiten.Image) {
@@ -1479,9 +1467,7 @@ type VivaDemo struct {
 	titleMotion *motion.WaveClock
 	rasterTitle *composite.RasterTitle
 
-	posXi float64
-	posZi float64
-	posRi float64
+	roto *composite.RotozoomBackground
 
 	text1 []rune
 	text2 []rune
@@ -1550,6 +1536,14 @@ func (d *VivaDemo) Init() error {
 		log.Printf("Error loading tile: %v", err)
 	} else {
 		d.tileImg = ebiten.NewImageFromImage(img)
+		program, err := presets.NewVivaRotozoom(presets.MultiscreenVivaRotozoom(demoWidth, demoHeight))
+		if err != nil {
+			return err
+		}
+		d.roto, err = composite.NewRotozoomBackground(composite.RotozoomBackgroundConfig{Image: d.tileImg, Program: program})
+		if err != nil {
+			return err
+		}
 	}
 
 	img, _, err = image.Decode(bytes.NewReader(demo4FontData))
@@ -1584,10 +1578,11 @@ func (d *VivaDemo) Update() error {
 		}
 	}
 
-	// Update effect positions
-	d.posXi += 0.008
-	d.posZi += 0.003
-	d.posRi += 0.005
+	if d.roto != nil {
+		if err := d.roto.Update(kit.Frame{}); err != nil {
+			return err
+		}
+	}
 
 	// Title animation
 	d.titleMotion.Step()
@@ -1616,18 +1611,9 @@ func (d *VivaDemo) Draw(screen *ebiten.Image) {
 
 	screen.Fill(color.Black)
 
-	// Draw background with tiles
-	zoom := 0.5 + math.Abs(math.Sin(d.posZi)*2.5)
-	rot := (360.0 / 4.0 * math.Cos(d.posRi*4-math.Cos(d.posRi-0.01))) * 0.3 * math.Pi / 180
-
-	posXCurve := math.Cos(d.posXi - 0.1)
-	oscX := (800.0 / 4) * math.Cos(d.posXi*4-posXCurve)
-	oscY := (600.0 / 2.7) * -math.Sin(d.posXi*2.3-posXCurve)
-
-	centerX := 400.0 + oscX
-	centerY := 300.0 + oscY
-
-	drawRepeatingRotozoom(screen, d.tileImg, centerX, centerY, zoom, rot, demoWidth*8, demoHeight*8, 1)
+	if d.roto != nil {
+		d.roto.Draw(screen)
+	}
 
 	if d.pseudoScroll != nil {
 		d.pseudoScroll.Draw(screen)

@@ -19,6 +19,9 @@ identical across 1,200 compared frames of the isolated panel.
 Its twelve cubes now use `effects.SolidCubeTrain` with the panel's material and
 1,024-tick reanchored sine/cosine path. The shared component owns the phases,
 rotations and bounded draw batch; the original embedded scene remains intact.
+The Coco and Viva backgrounds now use `composite.RotozoomBackground` with two
+panel presets. Their separate texture phases and tint are data, while the
+harmonic motion and repeated viewport sampling come from DCK.
 
 See the [DCK effect configuration guide](../../../lib/democonstructionkit/docs/EFFECT_OPTIONS.md) for the shared API and examples.
 
