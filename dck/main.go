@@ -957,8 +957,8 @@ type CocoDemo struct {
 	// Shared harmonic backdrop with Coco's embedded texture phase.
 	roto *composite.RotozoomBackground
 
-	// Title logo animation
-	logoX float64
+	// Shared horizontal title clock; the banner itself draws directly.
+	titleMotion *motion.WaveClock
 
 	// Copper bars
 	copper *composite.CopperBars
@@ -968,11 +968,13 @@ type CocoDemo struct {
 }
 
 func NewCocoDemo() *CocoDemo {
-	d := &CocoDemo{
-		logoX: 0.5,
-	}
+	d := &CocoDemo{}
 
 	var err error
+	d.titleMotion, err = motion.NewWaveClock(presets.CocoTitleMotion(demoWidth))
+	if err != nil {
+		panic(err)
+	}
 	d.cubeTrain, err = effects.NewSolidCubeTrain(presets.MultiscreenCocoCubeTrain(demoWidth, demoHeight, 40, nbCubes3))
 	if err != nil {
 		panic(err)
@@ -1091,8 +1093,7 @@ func (d *CocoDemo) Update() error {
 		}
 	}
 
-	// Update title logo
-	d.logoX += 0.0125
+	d.titleMotion.Step()
 	return nil
 }
 
@@ -1135,7 +1136,7 @@ func (d *CocoDemo) drawTitleWithCopperbars3(dst *ebiten.Image) {
 		d.copper.Draw(dst)
 	}
 
-	titleX := 64 + float64(demoWidth)*math.Cos(d.logoX)
+	titleX := d.titleMotion.At(0)
 	titleH := float64(d.titleImg.Bounds().Dy())
 	scaleY := 72.0 / titleH
 
