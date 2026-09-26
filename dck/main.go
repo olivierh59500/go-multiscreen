@@ -33,9 +33,6 @@ const (
 	screenWidth  = 1600
 	screenHeight = 1200
 	sampleRate   = 44100
-
-	viewDuration       = 7.0 // seconds per demo
-	transitionDuration = 4.0 // seconds for transitions
 )
 
 const compositeShaderSource = `//kage:unit pixels
@@ -75,26 +72,17 @@ var musicData = originalassets.
 type CameraState int
 
 const (
-	StateDemo1 CameraState = iota
-	StateTransition1to2
-	StateDemo2
-	StateTransition2to3
-	StateDemo3
-	StateTransition3to4
-	StateDemo4
-	StateTransition4toZoom
-	StateZoomOut
-	StateLoop
+	StateDemo1             CameraState = presets.MultiscreenView1
+	StateTransition1to2    CameraState = presets.MultiscreenMove12
+	StateDemo2             CameraState = presets.MultiscreenView2
+	StateTransition2to3    CameraState = presets.MultiscreenMove23
+	StateDemo3             CameraState = presets.MultiscreenView3
+	StateTransition3to4    CameraState = presets.MultiscreenMove34
+	StateDemo4             CameraState = presets.MultiscreenView4
+	StateTransition4toZoom CameraState = presets.MultiscreenZoomOut
+	StateZoomOut           CameraState = presets.MultiscreenOverview
+	StateLoop              CameraState = presets.MultiscreenLoop
 )
-
-// Cubic ease in-out
-func easeInOutCubic(t float64) float64 {
-	if t < 0.5 {
-		return 4 * t * t * t
-	}
-	u := -2*t + 2
-	return 1 - u*u*u/2
-}
 
 // ==================== PHENOMENA DEMO (Demo1) ====================
 
@@ -1152,13 +1140,8 @@ type MegaDemoGame struct {
 	musicStream  *sound.Stream
 
 	cameraState CameraState
-	stateTimer  float64
-
-	cameraX float64
-	cameraY float64
-
-	transitionTime float64
-	needsRedraw    bool
+	cameraTour  *motion.CameraTour
+	needsRedraw bool
 }
 
 func NewMegaDemoGame() *MegaDemoGame {
@@ -1175,10 +1158,9 @@ func NewMegaDemoGame() *MegaDemoGame {
 		},
 		cameraState:  StateDemo1,
 		needsRedraw:  true,
-		cameraX:      0,
-		cameraY:      0,
 		audioContext: audio.NewContext(sampleRate),
 	}
+	g.tour()
 	var shaderErr error
 	g.compositeShader, shaderErr = ebiten.NewShader([]byte(compositeShaderSource))
 	if shaderErr != nil {
@@ -1208,6 +1190,19 @@ func NewMegaDemoGame() *MegaDemoGame {
 	return g
 }
 
+// tour also initializes minimal capture fixtures that construct MegaDemoGame
+// directly without opening the audio device or creating a window.
+func (g *MegaDemoGame) tour() *motion.CameraTour {
+	if g.cameraTour == nil {
+		var err error
+		g.cameraTour, err = motion.NewCameraTour(presets.MultiscreenCameraTour())
+		if err != nil {
+			panic(err)
+		}
+	}
+	return g.cameraTour
+}
+
 func (g *MegaDemoGame) Update() error {
 	g.needsRedraw = true
 
@@ -1226,113 +1221,8 @@ func (g *MegaDemoGame) Update() error {
 		return fmt.Errorf("viva demo: %w", err)
 	}
 
-	// Update state machine
-	dt := 1.0 / 60.0
-	g.stateTimer += dt
-
-	switch g.cameraState {
-	case StateDemo1:
-		if g.stateTimer >= viewDuration {
-			g.cameraState = StateTransition1to2
-			g.transitionTime = 0
-			g.stateTimer = 0
-		}
-
-	case StateTransition1to2:
-		g.transitionTime += dt
-		progress := g.transitionTime / transitionDuration
-		if progress >= 1.0 {
-			g.cameraState = StateDemo2
-			g.cameraX = 800
-			g.cameraY = 0
-			g.stateTimer = 0
-		} else {
-			eased := easeInOutCubic(progress)
-			g.cameraX = 0 + eased*800
-			g.cameraY = 0
-		}
-
-	case StateDemo2:
-		if g.stateTimer >= viewDuration {
-			g.cameraState = StateTransition2to3
-			g.transitionTime = 0
-			g.stateTimer = 0
-		}
-
-	case StateTransition2to3:
-		g.transitionTime += dt
-		progress := g.transitionTime / transitionDuration
-		if progress >= 1.0 {
-			g.cameraState = StateDemo3
-			g.cameraX = 800
-			g.cameraY = 600
-			g.stateTimer = 0
-		} else {
-			eased := easeInOutCubic(progress)
-			g.cameraX = 800
-			g.cameraY = 0 + eased*600
-		}
-
-	case StateDemo3:
-		if g.stateTimer >= viewDuration {
-			g.cameraState = StateTransition3to4
-			g.transitionTime = 0
-			g.stateTimer = 0
-		}
-
-	case StateTransition3to4:
-		g.transitionTime += dt
-		progress := g.transitionTime / transitionDuration
-		if progress >= 1.0 {
-			g.cameraState = StateDemo4
-			g.cameraX = 0
-			g.cameraY = 600
-			g.stateTimer = 0
-		} else {
-			eased := easeInOutCubic(progress)
-			g.cameraX = 800 - eased*800
-			g.cameraY = 600
-		}
-
-	case StateDemo4:
-		if g.stateTimer >= viewDuration {
-			g.cameraState = StateTransition4toZoom
-			g.transitionTime = 0
-			g.stateTimer = 0
-		}
-
-	case StateTransition4toZoom:
-		// Transition handled in Draw with zoom
-		g.transitionTime += dt
-		progress := g.transitionTime / transitionDuration
-		if progress >= 1.0 {
-			g.cameraState = StateZoomOut
-			g.cameraX = 400
-			g.cameraY = 300
-			g.stateTimer = 0
-		}
-
-	case StateZoomOut:
-		if g.stateTimer >= viewDuration {
-			g.cameraState = StateLoop
-			g.transitionTime = 0
-			g.stateTimer = 0
-		}
-
-	case StateLoop:
-		g.transitionTime += dt
-		progress := g.transitionTime / transitionDuration
-		if progress >= 1.0 {
-			g.cameraState = StateDemo1
-			g.cameraX = 0
-			g.cameraY = 0
-			g.stateTimer = 0
-		} else {
-			eased := easeInOutCubic(progress)
-			g.cameraX = 400 - eased*400
-			g.cameraY = 300 - eased*300
-		}
-	}
+	g.tour().Step()
+	g.cameraState = CameraState(g.cameraTour.State().Segment)
 
 	return nil
 }
@@ -1360,48 +1250,8 @@ func (g *MegaDemoGame) Draw(screen *ebiten.Image) {
 		return
 	}
 
-	centerX := g.cameraX + float64(demoWidth)/2
-	centerY := g.cameraY + float64(demoHeight)/2
-	zoom := 1.0
-	mask := visibleDemoMask(g.cameraState)
-
-	switch g.cameraState {
-	case StateTransition4toZoom:
-		progress := g.transitionTime / transitionDuration
-		if progress > 1 {
-			progress = 1
-		}
-		eased := easeInOutCubic(progress)
-
-		startCenterX := float64(demoWidth) / 2
-		startCenterY := float64(demoHeight) + float64(demoHeight)/2
-		endCenterX := float64(screenWidth) / 2
-		endCenterY := float64(screenHeight) / 2
-
-		centerX = startCenterX + (endCenterX-startCenterX)*eased
-		centerY = startCenterY + (endCenterY-startCenterY)*eased
-		zoom = 1.0 - eased*0.5
-
-	case StateLoop:
-		progress := g.transitionTime / transitionDuration
-		if progress > 1 {
-			progress = 1
-		}
-		eased := easeInOutCubic(progress)
-		startZoom := 0.5
-		zoom = startZoom + (1.0-startZoom)*eased
-		startCenterX := float64(screenWidth) / 2
-		startCenterY := float64(screenHeight) / 2
-		endCenterX := float64(demoWidth) / 2
-		endCenterY := float64(demoHeight) / 2
-		centerX = startCenterX + (endCenterX-startCenterX)*eased
-		centerY = startCenterY + (endCenterY-startCenterY)*eased
-
-	case StateZoomOut:
-		centerX = float64(screenWidth) / 2
-		centerY = float64(screenHeight) / 2
-		zoom = 0.5
-	}
+	pose := g.tour().State()
+	centerX, centerY, zoom, mask := pose.CenterX, pose.CenterY, pose.Zoom, pose.VisibleMask
 
 	for demoIndex := 0; demoIndex < len(g.demoCanvases); demoIndex++ {
 		if mask&(1<<demoIndex) == 0 {
@@ -1436,27 +1286,6 @@ func (g *MegaDemoGame) Draw(screen *ebiten.Image) {
 		op.GeoM.Scale(zoom, zoom)
 		op.GeoM.Translate(float64(demoWidth)/2, float64(demoHeight)/2)
 		screen.DrawImage(g.demoCanvases[demoIndex], op)
-	}
-}
-
-func visibleDemoMask(state CameraState) uint8 {
-	switch state {
-	case StateDemo1:
-		return 1 << 0
-	case StateTransition1to2:
-		return 1<<0 | 1<<1
-	case StateDemo2:
-		return 1 << 1
-	case StateTransition2to3:
-		return 1<<1 | 1<<2
-	case StateDemo3:
-		return 1 << 2
-	case StateTransition3to4:
-		return 1<<2 | 1<<3
-	case StateDemo4:
-		return 1 << 3
-	default:
-		return 1<<0 | 1<<1 | 1<<2 | 1<<3
 	}
 }
 
