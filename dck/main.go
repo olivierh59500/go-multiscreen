@@ -15,7 +15,6 @@ import (
 	"github.com/olivierh59500/democonstructionkit/scrolling"
 	"github.com/olivierh59500/democonstructionkit/sound"
 	"github.com/olivierh59500/democonstructionkit/sprites"
-	"github.com/olivierh59500/democonstructionkit/timeline"
 
 	_ "image/png"
 	"log"
@@ -36,9 +35,6 @@ var musicData = originalassets.DCKAssetMusicData()
 
 // ==================== PHENOMENA DEMO (Demo1) ====================
 
-var demo1RasterbarData = originalassets.
-	DCKAssetDemo1RasterbarData()
-
 var demo1FontData = originalassets.
 	DCKAssetDemo1FontData()
 
@@ -48,40 +44,20 @@ var demo1LogoData = originalassets.
 var demo1PhotonData = originalassets.DCKAssetDemo1PhotonData()
 
 type PhenomenaDemo struct {
-	fontAtlas *scrolling.Atlas
-	dnaFrames *scrolling.DNAFrames
-	// Demo state
-	state       int
+	dnaFrames   *scrolling.DNAFrames
 	initialized bool
-	director    *timeline.ScalarStages
 
-	// Images
-	imgRasterbar  *ebiten.Image
 	imgFont       *ebiten.Image
 	imgLogo       *ebiten.Image
-	imgPhoton     *ebiten.Image
 	imgPhotonMask *ebiten.Image
-	imgTextPage1  *ebiten.Image
-	imgTextPage2  *ebiten.Image
-
-	// Animation canvases
-	cnvFrames     *ebiten.Image
-	rasterGrad640 *ebiten.Image
 	rasterGrad800 *ebiten.Image
 
-	// Animation variables
-	t              float64
-	percent        float64
-	blackRectWidth float64
-	blackRectShow  bool
-	rasterbarY     float64
-	direction      float64
+	t float64
 
 	// Scroller data
 	sliceProgram *scrolling.SliceProgram
 	rowWave      *motion.RecurrentRowWave
 	dnaDraw      scrolling.DNADrawConfig
-	photonMotion *motion.GravityBounce
 	hueMotion    *motion.WrapBank
 }
 
@@ -89,25 +65,8 @@ const charsetPhenomena = presets.PhenomenaAlphabet
 
 const scrollMessage = `           THIS IS IMPOSSIBLE!            WHAT IS?               THIS IS!!!                    ...SO, ANOTHER DEMO FROM PHENOMENA HAS REACHED YOU...    THIS TIME WITH CODING BY                PHOTON!                ^  RASTA MUSIC BY                    FIREFOX!                &    AND SUPER GFX BY                       TERMINATOR               #  ...SO, SLAYER! HOW DO YOU LIKE @MY@ SCROLLER?  IT'S MUCH IMPOSSIBLER THAN YOURS!    ...   SO DE SO!          DOES ANYONE HAVE A PROGRAM CALLED 'PAGE RENDER 3D'? THEN CONTACT OUR NEW GFX ARTIST AT          0492-41027               % AND ASK FOR MIKAEL. NEWS NEWS NEWS NEWS   !!! LOOK OUT FOR PHENOMENA'S NEW DISK MAG CALLED ' TRANSMISSION ' ! ! ! ! IT'S A MAG ESPECIALLY MADE FOR ALL YOU CODERS OUT THERE, COMPLETE WITH CODER / DEMO / CRACK TOP-TEN,ARTICLES ABOUT CODING / CRACKING, AND SOURCES, ETC,ETC...         HERE'S MY TOP-FIVE DEMO GROUPS 1. SCOOPEX  -SLAYER IS WORKING HARD AND HIS M.H. DEMO IS STILL UNBEATEN-  ...  2. CRYPTOBURNERS  -NICE MD 2 BUT SLOOOW VECTORS-  ... 3. RSI/PARADOX  -NICE DEMOS LATELY, EXCEPT FOR THE 'FOLLOW ME' CRAP-  ...  4. KEFRENS  -ALL YOUR LATEST DEMOS HAVE BEEN PROFESSIONAL!-  ...  5. THE LINK  -ALWAYS COOL IDEAS,GIVE US SOME MORE-  ...  OF COURSE, PHENOMENA IS EXCLUDED FROM THIS LIST...        NOW OVER TO SOME INTERNAL GREETS...  @     BIG 2A-FINISH YOUR DEMO AND BUY AN A500!   @   CORE-GET YOUR HANDS ON A WORKING AMIGA!   @   DANKO-GET BUSY!   @   KLUTTAS O SPIRIT-WAKE UP FROM YOUR COMA!!!!   @   RAVE-SAME TO YOU!       ...     AND NOW, TIME FOR SOME OTHER GREETS... THEY GO TO --- CONAN/TPL-MAKE A GOOD DEMO AND JOIN ANOTHER GROUP!   @   KALLE BALLE/TSL - EVER THOUGHT ABOUT CHANGING YOUR NAME????   @   HAVOK/ECSTASY-JOIN US! I'M JUST A PHONECALL AWAY - 0381-11344 @   MAHONEY/NS-TRY TAKING SOME IDEAS FROM NT 1.2!  @   UNCLE TOM/RAZOR-STOP DRAWING AND DO SOME MUSIC @   SLAYER/SCX-AND ALL OTHER GOOD CODERS-CALL ME FOR SOME COOL TECH-TALK    0381-11344   ZEUS/ADEPT-GOOD LUCK AND CODE HARD!       ---     NOW I DON'T HAVE VERY MUCH ELSE TO SAY, EXCEPT....                    BYE!             @@@@@@@@@@@@@                `
 
-const (
-	StateTextPage1Phe          = presets.PhenomenaTextPage1
-	StateTextPage2Phe          = presets.PhenomenaTextPage2
-	StateShowLogoPhe           = presets.PhenomenaShowLogo
-	StateShowUpperRasterbarPhe = presets.PhenomenaShowUpperRaster
-	StateShowLowerRasterbarPhe = presets.PhenomenaShowLowerRaster
-	StateDropPhotonPhe         = presets.PhenomenaDropPhoton
-	StatePhotonFadeToRedPhe    = presets.PhenomenaPhotonFade
-	StateMainDemoPhe           = presets.PhenomenaMain
-)
-
 func NewPhenomenaDemo() *PhenomenaDemo {
-	d := &PhenomenaDemo{
-		state:          StateMainDemoPhe, // Start directly at main demo
-		blackRectWidth: 800,
-		blackRectShow:  false, // No black rect at start
-		rasterbarY:     -40,
-		direction:      1,
-	}
+	d := &PhenomenaDemo{}
 	programConfig, err := presets.PhenomenaDNAProgram(scrollMessage, charToFontIndexPhe)
 	if err != nil {
 		panic(err)
@@ -121,15 +80,7 @@ func NewPhenomenaDemo() *PhenomenaDemo {
 		panic(err)
 	}
 	d.rowWave = wave
-	d.photonMotion, err = motion.NewGravityBounce(presets.PhenomenaPhotonBounce())
-	if err != nil {
-		panic(err)
-	}
 	d.hueMotion, err = motion.NewWrapBank(presets.PhenomenaPhotonHueCycle())
-	if err != nil {
-		panic(err)
-	}
-	d.director, err = timeline.NewScalarStages(presets.PhenomenaPresentation(StateMainDemoPhe))
 	if err != nil {
 		panic(err)
 	}
@@ -147,24 +98,11 @@ func (d *PhenomenaDemo) Init() error {
 		img image.Image
 	)
 
-	// Load images
-	if d.state != StateMainDemoPhe {
-		img, _, err = image.Decode(bytes.NewReader(demo1RasterbarData))
-		if err != nil {
-			return err
-		}
-		d.imgRasterbar = ebiten.NewImageFromImage(img)
-	}
-
 	img, _, err = image.Decode(bytes.NewReader(demo1FontData))
 	if err != nil {
 		return err
 	}
 	d.imgFont = ebiten.NewImageFromImage(img)
-	d.fontAtlas, err = presets.FontAtlas("multiscreen-phenomena", d.imgFont)
-	if err != nil {
-		return err
-	}
 
 	img, _, err = image.Decode(bytes.NewReader(demo1LogoData))
 	if err != nil {
@@ -176,7 +114,6 @@ func (d *PhenomenaDemo) Init() error {
 	if err != nil {
 		return err
 	}
-	d.imgPhoton = ebiten.NewImageFromImage(img)
 	d.imgPhotonMask, err = composite.NewWhiteSilhouette(img)
 	if err != nil {
 		return err
@@ -186,16 +123,6 @@ func (d *PhenomenaDemo) Init() error {
 	})
 	if err != nil {
 		return err
-	}
-
-	if d.state != StateMainDemoPhe {
-		d.rasterGrad640, err = composite.NewGradientImage(palette.GradientConfig{
-			Width: 640, Height: 12, Stops: presets.PhenomenaRasterStops(),
-		})
-		if err != nil {
-			return err
-		}
-		d.initTextPages()
 	}
 
 	// Init character frames
@@ -210,65 +137,6 @@ func (d *PhenomenaDemo) Init() error {
 
 	d.initialized = true
 	return nil
-}
-
-func (d *PhenomenaDemo) initTextPages() {
-	texts1 := []struct {
-		Y    int
-		Text string
-	}{
-		{18, "   FOR HOT VHS"},
-		{75, "  AND SOFTWARE"},
-		{133, "SWAPPING, CONTACT"},
-		{219, " THE PUNISHER "},
-		{291, "      AT..."},
-	}
-	d.imgTextPage1 = d.makeIntroText("xor", color.Black, texts1)
-
-	texts2 := []struct {
-		Y    int
-		Text string
-	}{
-		{78, "    PHENOMENA"},
-		{158, "   SKALDEV. 69"},
-		{238, "  16142 BROMMA"},
-		{334, "     SWEDEN!"},
-	}
-	d.imgTextPage2 = d.makeIntroText("source-over", nil, texts2)
-}
-
-func (d *PhenomenaDemo) makeIntroText(mode string, backColor color.Color, texts []struct {
-	Y    int
-	Text string
-}) *ebiten.Image {
-	img := ebiten.NewImage(640, 480)
-
-	if backColor != nil {
-		img.Fill(backColor)
-	}
-
-	for _, t := range texts {
-		x := 48
-		for _, ch := range t.Text {
-			subImg, _, found := d.fontAtlas.Glyph(ch)
-
-			if found {
-				op := &ebiten.DrawImageOptions{}
-				op.GeoM.Scale(2, 2)
-				op.GeoM.Translate(float64(x), float64(t.Y))
-
-				if mode == "xor" {
-					op.ColorM.Scale(-1, -1, -1, 1)
-					op.ColorM.Translate(1, 1, 1, 0)
-				}
-
-				img.DrawImage(subImg, op)
-			}
-			x += 32
-		}
-	}
-
-	return img
 }
 
 var charToFontIndexPhe = func() func(rune) (int, bool) {
@@ -306,7 +174,6 @@ func (d *PhenomenaDemo) initCharacterFrames() error {
 	if err != nil {
 		return err
 	}
-	d.cnvFrames = d.dnaFrames.Image
 	return nil
 }
 
@@ -317,35 +184,11 @@ func (d *PhenomenaDemo) Update() error {
 		}
 	}
 
-	switch d.state {
-	case StateDropPhotonPhe:
-		if d.photonMotion.Step() {
-			d.director.Signal("photon-landed")
-		}
-	case StateMainDemoPhe:
-		d.hueMotion.Step()
-		if err := d.sliceProgram.Step(); err != nil {
-			return err
-		}
-		d.t += 0.30
-		if d.blackRectShow {
-			d.blackRectWidth -= 8
-			if d.blackRectWidth < 0 {
-				d.blackRectWidth = 0
-				d.blackRectShow = false
-			}
-		}
+	d.hueMotion.Step()
+	if err := d.sliceProgram.Step(); err != nil {
+		return err
 	}
-	previousStage := d.state
-	d.director.Step()
-	pose := d.director.State()
-	d.state = pose.Stage
-	if previousStage == StateTextPage1Phe {
-		d.rasterbarY = pose.Value
-	} else {
-		d.percent = pose.Value
-	}
-	d.direction = pose.Direction
+	d.t += .30
 
 	return nil
 }
@@ -355,122 +198,30 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 		return
 	}
 
-	switch d.state {
-	case StateTextPage1Phe:
-		screen.Fill(color.Black)
-		op := &ebiten.DrawImageOptions{}
-		op.GeoM.Translate(0, d.rasterbarY)
-		screen.DrawImage(d.imgRasterbar, op)
-		screen.DrawImage(d.imgTextPage1, nil)
+	screen.Fill(color.Black)
+	// Fill the middle section with the panel's dark blue background.
+	vector.DrawFilledRect(screen, 0, 162, 800, 375, color.RGBA{0x00, 0x01, 0x11, 0xFF}, false)
 
-	case StateTextPage2Phe:
-		screen.Fill(color.Black)
-		op := &ebiten.DrawImageOptions{}
-		brightness := d.percent / 100.0
-		if brightness > 1 {
-			brightness = 2 - brightness
-		}
-		op.ColorM.Scale(brightness, brightness, brightness, 1)
-		screen.DrawImage(d.imgTextPage2, op)
+	logoOp := &ebiten.DrawImageOptions{}
+	logoOp.GeoM.Translate(80, 0)
+	screen.DrawImage(d.imgLogo, logoOp)
 
-	case StateShowLogoPhe:
-		screen.Fill(color.RGBA{0x00, 0x01, 0x11, 0xFF})
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(0, 129)
+	screen.DrawImage(d.rasterGrad800, op)
 
-		if d.percent <= 100 {
-			op := &ebiten.DrawImageOptions{}
-			brightness := d.percent / 100.0
-			op.ColorM.Scale(brightness, brightness, brightness, 1)
-			screen.DrawImage(d.imgLogo, op)
-		} else {
-			screen.DrawImage(d.imgLogo, nil)
+	op.GeoM.Reset()
+	op.GeoM.Translate(0, 537)
+	screen.DrawImage(d.rasterGrad800, op)
 
-			op := &ebiten.DrawImageOptions{}
-			op.ColorM.Scale(1, 1, 1, 1)
-			op.ColorM.Translate(1, 1, 1, 0)
-			alpha := (200 - d.percent) / 100.0
-			op.ColorM.Scale(1, 1, 1, alpha)
-			screen.DrawImage(d.imgLogo, op)
-		}
+	op = &ebiten.DrawImageOptions{}
+	hue := d.hueMotion.At(0) / 360.0
+	r, g, b := palette.HSLToRGB(hue, 1.0, 0.5)
+	op.ColorScale.Scale(float32(r), float32(g), float32(b), 1)
+	op.GeoM.Translate(365, 555)
+	screen.DrawImage(d.imgPhotonMask, op)
 
-	case StateShowUpperRasterbarPhe, StateShowLowerRasterbarPhe, StateDropPhotonPhe, StatePhotonFadeToRedPhe:
-		screen.Fill(color.Black)
-		vector.DrawFilledRect(screen, 0, 130, 640, 300, color.RGBA{0x00, 0x01, 0x11, 0xFF}, false)
-
-		screen.DrawImage(d.imgLogo, nil)
-
-		if d.state >= StateShowUpperRasterbarPhe {
-			alpha := 1.0
-			if d.state == StateShowUpperRasterbarPhe {
-				alpha = d.percent / 100.0
-			}
-			op := &ebiten.DrawImageOptions{}
-			op.ColorM.Scale(1, 1, 1, alpha)
-			op.GeoM.Translate(0, 129)
-			screen.DrawImage(d.rasterGrad640, op)
-		}
-
-		if d.state >= StateShowLowerRasterbarPhe {
-			alpha := 1.0
-			if d.state == StateShowLowerRasterbarPhe {
-				alpha = d.percent / 100.0
-			}
-			op := &ebiten.DrawImageOptions{}
-			op.ColorM.Scale(1, 1, 1, alpha)
-			op.GeoM.Translate(0, 430)
-			screen.DrawImage(d.rasterGrad640, op)
-		}
-
-		if d.state >= StateDropPhotonPhe {
-			if d.state == StatePhotonFadeToRedPhe {
-				op := &ebiten.DrawImageOptions{}
-				op.GeoM.Translate(285, 445)
-
-				lightness := d.percent / 100.0
-				op.ColorM.Scale(lightness, lightness*0.5, lightness*0.5, 1)
-
-				screen.DrawImage(d.imgPhoton, op)
-			} else {
-				op := &ebiten.DrawImageOptions{}
-				op.GeoM.Translate(285, d.photonMotion.Position())
-				screen.DrawImage(d.imgPhoton, op)
-			}
-		}
-
-	case StateMainDemoPhe:
-		screen.Fill(color.Black)
-		// Fill middle section with dark blue background (scaled for 800x600)
-		vector.DrawFilledRect(screen, 0, 162, 800, 375, color.RGBA{0x00, 0x01, 0x11, 0xFF}, false)
-
-		// Draw logo centered horizontally (640 wide -> center in 800)
-		logoOp := &ebiten.DrawImageOptions{}
-		logoOp.GeoM.Translate(80, 0) // Center horizontally: (800-640)/2 = 80
-		screen.DrawImage(d.imgLogo, logoOp)
-
-		// Draw upper raster bar (full width)
-		op := &ebiten.DrawImageOptions{}
-		op.GeoM.Translate(0, 129)
-		screen.DrawImage(d.rasterGrad800, op)
-
-		// Draw lower raster bar (full width)
-		op.GeoM.Reset()
-		op.GeoM.Translate(0, 537)
-		screen.DrawImage(d.rasterGrad800, op)
-
-		// Draw photon with color cycling (centered)
-		op = &ebiten.DrawImageOptions{}
-		hue := d.hueMotion.At(0) / 360.0
-		r, g, b := palette.HSLToRGB(hue, 1.0, 0.5)
-		op.ColorScale.Scale(float32(r), float32(g), float32(b), 1)
-		op.GeoM.Translate(365, 555) // Centered: 285 + 80 = 365, bottom adjusted
-		screen.DrawImage(d.imgPhotonMask, op)
-
-		// Draw scroller
-		d.drawScroller(screen)
-
-		if d.blackRectShow {
-			vector.DrawFilledRect(screen, 0, 468, float32(d.blackRectWidth), 69, color.RGBA{0x00, 0x01, 0x11, 0xFF}, false)
-		}
-	}
+	d.drawScroller(screen)
 }
 
 func (d *PhenomenaDemo) drawScroller(screen *ebiten.Image) {
