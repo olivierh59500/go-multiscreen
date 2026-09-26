@@ -22,6 +22,10 @@ rotations and bounded draw batch; the original embedded scene remains intact.
 The Coco and Viva backgrounds now use `composite.RotozoomBackground` with two
 panel presets. Their separate texture phases and tint are data, while the
 harmonic motion and repeated viewport sampling come from DCK.
+The embedded Coco text now uses the complete `scrolling.Config.Scanline`
+transport. Its preset keeps the panel's proportional font, cumulative wave,
+three-pixel strip mesh, bounce, source-window split and continuous message loop;
+the local cursor and triangle-building functions have been removed.
 
 See the [DCK effect configuration guide](../../../lib/democonstructionkit/docs/EFFECT_OPTIONS.md) for the shared API and examples.
 

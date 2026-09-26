@@ -7,9 +7,12 @@ import (
 	"testing"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	kit "github.com/olivierh59500/democonstructionkit"
+	"github.com/olivierh59500/democonstructionkit/composite"
 	"github.com/olivierh59500/democonstructionkit/effects"
 	"github.com/olivierh59500/democonstructionkit/geometry"
 	"github.com/olivierh59500/democonstructionkit/presets"
+	"github.com/olivierh59500/democonstructionkit/scrolling"
 )
 
 func TestTCBScrollShaderCompiles(t *testing.T) {
@@ -95,62 +98,92 @@ func TestCocoDMALogoRecurrences(t *testing.T) {
 	}
 }
 
-func TestCocoScrollLetterWrapsAcrossMultipleMessageLoops(t *testing.T) {
-	demo := &CocoDemo{
-		position:   []int{10, 20, 30},
-		scrollText: "ABC",
+func TestCocoPanelScanlinePreservesThreePixelStrips(t *testing.T) {
+	config, err := presets.MultiscreenCocoScanlineScroll(nil, cocoScrollText3)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	if got, want := demo.getPosition3(4), 40; got != want {
-		t.Fatalf("position after wrap = %d, want %d", got, want)
-	}
-
-	demo.advanceScrollLetter3(95)
-	if got, want := demo.letterNum, 9; got != want {
-		t.Fatalf("letter after three loops = %d, want %d", got, want)
-	}
-	if got, want := demo.getLetter3(demo.letterNum), byte('A'); got != want {
-		t.Fatalf("wrapped letter = %q, want %q", got, want)
-	}
-
-	// Some curve sections move backwards; the active letter must follow them.
-	demo.advanceScrollLetter3(5)
-	if got, want := demo.letterNum, 0; got != want {
-		t.Fatalf("letter after backwards movement = %d, want %d", got, want)
+	if config.ViewportWidth != 800 || config.ViewportHeight != 528 || config.SurfaceWidth != 1600 ||
+		config.SourceRows != 36 || config.RowHeight != 3 || config.StripHeight != 3 ||
+		config.WaveStep != 15 || config.CursorRows != 36 || config.BounceAmplitude != 18 ||
+		config.BounceRate != .1 || config.Scale != 3 || config.DestinationY != 72 ||
+		config.Wrap != scrolling.ScanlineSplit || config.UseTime || config.SurfaceUnmanaged ||
+		!config.AlternateDiagonal || config.Background != nil {
+		t.Fatalf("embedded Coco scroller geometry changed: %+v", config)
 	}
 }
 
-func TestCocoScrollerFollowsWaveAcrossThreeFullMessages(t *testing.T) {
-	demo := &CocoDemo{
-		curves:     make([][]int, 8),
-		scrollText: cocoScrollText3,
+func TestCocoPanelScanlineKeepsThreeMessageLoops(t *testing.T) {
+	decoded, err := png.Decode(bytes.NewReader(demo3FontData))
+	if err != nil {
+		t.Fatal(err)
 	}
-	demo.initFontData3()
-	demo.createCurves()
-	demo.precalcPosition()
-	demo.precalcMainWave()
+	image := ebiten.NewImageFromImage(decoded)
+	defer image.Deallocate()
+	atlas, err := presets.FontAtlas("multiscreen-coco", image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := presets.MultiscreenCocoScanlineScroll(atlas, cocoScrollText3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scroll, err := scrolling.New(scrolling.Config{Scanline: &config})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer scroll.Close()
+	controller := scroll.ScanlineController()
+	if controller == nil {
+		t.Fatal("missing scanline controller")
+	}
 
-	targetLetter := len(demo.scrollText) * 3
-	firstWrapWavePos := -1
-	for frontWavePos := 0; frontWavePos < 100_000_000 && demo.letterNum < targetLetter; frontWavePos += 600 {
-		decalX := demo.scrollOffset3(frontWavePos)
-		demo.advanceScrollLetter3(decalX)
-		if firstWrapWavePos < 0 && demo.letterNum >= len(demo.scrollText) {
-			firstWrapWavePos = frontWavePos
-		}
-		start := demo.getPosition3(demo.letterNum)
-		end := demo.getPosition3(demo.letterNum + 1)
-		if decalX < start || decalX >= end {
-			t.Fatalf("offset %d is outside active letter %d interval [%d, %d)", decalX, demo.letterNum, start, end)
+	positions := make([]int, 0, len(cocoScrollText3))
+	cumulative := 0
+	for _, r := range cocoScrollText3 {
+		if _, glyph, ok := atlas.ExactGlyph(r); ok {
+			cumulative += int(float64(int(glyph.Advance)) * 3)
+			positions = append(positions, cumulative)
 		}
 	}
-	if demo.letterNum < targetLetter {
-		t.Fatalf("scroller reached only letter %d, want at least %d", demo.letterNum, targetLetter)
+	target := len(positions) * 3
+	firstWrapTick := -1
+	lastLetter := 0
+	for tick := 0; tick < 6_666_666 && lastLetter < target; tick += 40 {
+		if err := scroll.Update(kit.Frame{Tick: uint64(tick)}); err != nil {
+			t.Fatal(err)
+		}
+		state := controller.State()
+		if state.WaveStart != tick*15 {
+			t.Fatalf("tick %d wave start %d", tick, state.WaveStart)
+		}
+		offset := composite.CumulativeAt(config.Wave, state.WaveStart, 0)
+		for row := 1; row < 36; row++ {
+			offset = min(offset, composite.CumulativeAt(config.Wave, state.WaveStart+row, 0))
+		}
+		offset = max(0, offset)
+		start := 0
+		if state.Letter > 0 {
+			start = composite.CumulativeAt(positions, state.Letter-1, 0)
+		}
+		end := composite.CumulativeAt(positions, state.Letter, 0)
+		if offset < start || offset >= end || state.Decal != start {
+			t.Fatalf("tick %d offset %d is outside letter %d interval [%d, %d), decal %d", tick, offset, state.Letter, start, end, state.Decal)
+		}
+		if firstWrapTick < 0 && state.Letter >= len(positions) {
+			firstWrapTick = tick
+		}
+		lastLetter = state.Letter
 	}
-	if firstWrapWavePos < 0 {
-		t.Fatal("scroller never completed its first message loop")
+	if firstWrapTick < 0 || lastLetter < target {
+		t.Fatalf("scroller stopped at letter %d of %d; first wrap tick %d", lastLetter, target, firstWrapTick)
 	}
-	t.Logf("first full message loop reached near wave position %d", firstWrapWavePos)
+	if err := scroll.Update(kit.Frame{}); err != nil {
+		t.Fatal(err)
+	}
+	if state := controller.State(); state.Letter != 0 {
+		t.Fatalf("backward seek retained letter %d", state.Letter)
+	}
 }
 
 func TestHalfVolumeIntegerMatchesPreviousFloatConversion(t *testing.T) {

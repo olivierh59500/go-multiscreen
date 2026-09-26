@@ -750,20 +750,6 @@ func hslToRGB(h, s, l float64) (float64, float64, float64) {
 	return r, g, b
 }
 
-var repeatingQuadIndices = [...]uint16{0, 1, 2, 1, 2, 3}
-
-func appendTexturedQuad(vertices []ebiten.Vertex, indices []uint16, dstX, dstY, dstWidth, dstHeight, srcX, srcY, srcWidth, srcHeight float32) ([]ebiten.Vertex, []uint16) {
-	base := uint16(len(vertices))
-	vertices = append(vertices,
-		ebiten.Vertex{DstX: dstX, DstY: dstY, SrcX: srcX, SrcY: srcY, ColorR: 1, ColorG: 1, ColorB: 1, ColorA: 1},
-		ebiten.Vertex{DstX: dstX + dstWidth, DstY: dstY, SrcX: srcX + srcWidth, SrcY: srcY, ColorR: 1, ColorG: 1, ColorB: 1, ColorA: 1},
-		ebiten.Vertex{DstX: dstX, DstY: dstY + dstHeight, SrcX: srcX, SrcY: srcY + srcHeight, ColorR: 1, ColorG: 1, ColorB: 1, ColorA: 1},
-		ebiten.Vertex{DstX: dstX + dstWidth, DstY: dstY + dstHeight, SrcX: srcX + srcWidth, SrcY: srcY + srcHeight, ColorR: 1, ColorG: 1, ColorB: 1, ColorA: 1},
-	)
-	indices = append(indices, base, base+1, base+2, base+1, base+2, base+3)
-	return vertices, indices
-}
-
 // ==================== TCB DEMO (Demo2) ====================
 
 var demo2RastData = originalassets.
@@ -944,15 +930,10 @@ var demo3DmaLogoData = originalassets.
 var demo3FontData = originalassets.DCKAssetDemo3FontData()
 
 const (
-	nbCubes3               = 12
-	nbDMALogos3            = 16
-	fontHeight3            = 36
-	scrollScaleInt3        = 3
-	scrollScaleFactor3     = 3.0
-	scrollSurfWidthFactor3 = 2.0
-	scrollSpeedFactor3     = 15
-	cocoScrollPadding3     = "     "
-	cocoScrollText3        = cocoScrollPadding3 + cocoScrollPadding3 +
+	nbCubes3           = 12
+	nbDMALogos3        = 16
+	cocoScrollPadding3 = "     "
+	cocoScrollText3    = cocoScrollPadding3 + cocoScrollPadding3 +
 		"WELCOME TO THE COCO IS THE BEST DEMO! " + cocoScrollPadding3 +
 		"THIS DEMO COMBINES THE BEST EFFECTS FROM VARIOUS ATARI ST DEMOS. " + cocoScrollPadding3 +
 		"GREETINGS TO ALL DEMOSCENE LOVERS! " + cocoScrollPadding3 + cocoScrollPadding3
@@ -968,18 +949,14 @@ var (
 )
 
 type CocoDemo struct {
-	scrollRenderer *scrolling.Scrolling
-	initialized    bool
+	scroll      *scrolling.Scrolling
+	initialized bool
 
 	titleImg   *ebiten.Image
 	barsImg    *ebiten.Image
 	cocoImg    *ebiten.Image
 	dmaLogoImg *ebiten.Image
 	fontImg    *ebiten.Image
-
-	scrollSurf *ebiten.Image
-
-	fontAtlas *scrolling.Atlas
 
 	// Batched 3D cube procession with reanchored harmonic motion.
 	cubeTrain *effects.SolidCubeTrain
@@ -990,18 +967,6 @@ type CocoDemo struct {
 	dmaCos     [4]float64
 	dmaStepSin [4]float64
 	dmaStepCos [4]float64
-
-	// Scrolling text (megatwist style)
-	frontWavePos   int
-	letterNum      int
-	letterDecal    int
-	curves         [][]int
-	frontMainWave  []int
-	position       []int
-	scrollText     string
-	scrollVertices []ebiten.Vertex
-	scrollIndices  []uint16
-	lastTextOffset int
 
 	// Shared harmonic backdrop with Coco's embedded texture phase.
 	roto *composite.RotozoomBackground
@@ -1018,12 +983,7 @@ type CocoDemo struct {
 
 func NewCocoDemo() *CocoDemo {
 	d := &CocoDemo{
-		scrollSurf:     ebiten.NewImage(int(float64(demoWidth)*scrollSurfWidthFactor3), int(float64(fontHeight3)*scrollScaleFactor3)),
-		scrollVertices: make([]ebiten.Vertex, 0, ((demoHeight-72)/scrollScaleInt3)*8),
-		scrollIndices:  make([]uint16, 0, ((demoHeight-72)/scrollScaleInt3)*12),
-		logoX:          0.5,
-		lastTextOffset: -1,
-		scrollText:     cocoScrollText3,
+		logoX: 0.5,
 	}
 
 	var err error
@@ -1035,11 +995,6 @@ func NewCocoDemo() *CocoDemo {
 		d.dmaSin[i], d.dmaCos[i] = math.Sincos(cocoDMAPhaseOffsets3[i])
 		d.dmaStepSin[i], d.dmaStepCos[i] = math.Sincos(cocoDMAPhaseDeltas3[i])
 	}
-
-	// Init wave curves
-	d.curves = make([][]int, 8)
-	d.createCurves()
-	d.precalcMainWave()
 
 	return d
 }
@@ -1096,20 +1051,22 @@ func (d *CocoDemo) Init() error {
 		log.Printf("Error loading font: %v", err)
 	} else {
 		d.fontImg = ebiten.NewImageFromImage(img)
+		atlas, err := presets.FontAtlas("multiscreen-coco", d.fontImg)
+		if err != nil {
+			return err
+		}
+		config, err := presets.MultiscreenCocoScanlineScroll(atlas, cocoScrollText3)
+		if err != nil {
+			return err
+		}
+		d.scroll, err = scrolling.New(scrolling.Config{Scanline: &config})
+		if err != nil {
+			return err
+		}
 	}
-	d.initFontData3()
-	d.precalcPosition()
 
 	d.initialized = true
 	return nil
-}
-
-func (d *CocoDemo) initFontData3() {
-	var err error
-	d.fontAtlas, err = presets.FontAtlas("multiscreen-coco", d.fontImg)
-	if err != nil {
-		panic(err)
-	}
 }
 
 func (d *CocoDemo) Update() error {
@@ -1120,6 +1077,11 @@ func (d *CocoDemo) Update() error {
 	}
 
 	d.iteration++
+	if d.scroll != nil {
+		if err := d.scroll.Update(kit.Frame{Tick: uint64(d.iteration)}); err != nil {
+			return err
+		}
+	}
 
 	// Update copper bars
 	if d.copper != nil {
@@ -1180,8 +1142,10 @@ func (d *CocoDemo) Draw(screen *ebiten.Image) {
 		d.roto.Draw(screen)
 	}
 
-	// 2. Scrolling text with distortion
-	d.drawScrollText3(screen)
+	// 2. Scrolling text with the panel's three-pixel strip configuration.
+	if d.scroll != nil {
+		d.scroll.Draw(screen)
+	}
 
 	// 3. DMA logo sprites
 	d.drawDMALogos3(screen)
@@ -1212,123 +1176,6 @@ func (d *CocoDemo) drawDMALogos3(dst *ebiten.Image) {
 	}
 }
 
-func (d *CocoDemo) drawScrollText3(dst *ebiten.Image) {
-	d.frontWavePos = d.iteration * scrollSpeedFactor3
-
-	decalX := d.scrollOffset3(d.frontWavePos)
-
-	// letterNum is deliberately unbounded. getPosition3 and getLetter3 repeat
-	// their source tables together so the whole message keeps looping instead
-	// of becoming clamped to its last character.
-	d.advanceScrollLetter3(decalX)
-
-	// Safety check before calling displayText3
-	if d.letterNum >= 0 && len(d.scrollText) > 0 {
-		d.displayText3(d.letterNum)
-	}
-
-	bounce := int(18.0 * math.Abs(math.Sin(float64(d.iteration)*0.1)))
-
-	scrollWidth := d.scrollSurf.Bounds().Dx()
-
-	baseY := 72
-	totalLines := demoHeight - 72
-	d.scrollVertices = d.scrollVertices[:0]
-	d.scrollIndices = d.scrollIndices[:0]
-	// Each source-font line is enlarged to exactly three destination lines.
-	// Emit one three-pixel strip instead of three equivalent one-pixel strips:
-	// this preserves nearest-neighbour sampling while cutting the scrolling
-	// mesh and its command-buffer upload to one third of their former size.
-	for sourceFontLine := 0; sourceFontLine < totalLines/scrollScaleInt3; sourceFontLine++ {
-		ligne := sourceFontLine * scrollScaleInt3
-		frontWave := d.getWave3(d.frontWavePos + sourceFontLine)
-		scrollXRaw := frontWave - d.letterDecal
-
-		scaledLine := ((sourceFontLine + bounce) % fontHeight3) * scrollScaleInt3
-
-		if scrollXRaw < 0 {
-			visibleWidth := demoWidth + scrollXRaw
-			if visibleWidth > 0 {
-				width := minInt3(visibleWidth, scrollWidth)
-				d.scrollVertices, d.scrollIndices = appendTexturedQuad(
-					d.scrollVertices, d.scrollIndices,
-					float32(-scrollXRaw), float32(baseY+ligne), float32(width), scrollScaleInt3,
-					0, float32(scaledLine), float32(width), scrollScaleInt3,
-				)
-			}
-			continue
-		}
-
-		scrollX := scrollXRaw % scrollWidth
-		if scrollX >= scrollWidth-demoWidth {
-			width1 := scrollWidth - scrollX
-			if width1 > 0 && width1 <= demoWidth {
-				d.scrollVertices, d.scrollIndices = appendTexturedQuad(
-					d.scrollVertices, d.scrollIndices,
-					0, float32(baseY+ligne), float32(width1), scrollScaleInt3,
-					float32(scrollX), float32(scaledLine), float32(width1), scrollScaleInt3,
-				)
-			}
-
-			width2 := demoWidth - width1
-			if width2 > 0 && width2 <= demoWidth {
-				d.scrollVertices, d.scrollIndices = appendTexturedQuad(
-					d.scrollVertices, d.scrollIndices,
-					float32(width1), float32(baseY+ligne), float32(width2), scrollScaleInt3,
-					0, float32(scaledLine), float32(width2), scrollScaleInt3,
-				)
-			}
-		} else if scrollX+demoWidth <= scrollWidth {
-			d.scrollVertices, d.scrollIndices = appendTexturedQuad(
-				d.scrollVertices, d.scrollIndices,
-				0, float32(baseY+ligne), demoWidth, scrollScaleInt3,
-				float32(scrollX), float32(scaledLine), demoWidth, scrollScaleInt3,
-			)
-		}
-	}
-	if len(d.scrollIndices) > 0 {
-		op := &ebiten.DrawTrianglesOptions{Filter: ebiten.FilterNearest}
-		dst.DrawTriangles(d.scrollVertices, d.scrollIndices, d.scrollSurf, op)
-	}
-}
-
-func minInt3(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func (d *CocoDemo) displayText3(letterOffset int) {
-	if d.fontImg == nil || letterOffset == d.lastTextOffset {
-		return
-	}
-	d.lastTextOffset = letterOffset
-	d.scrollSurf.Clear()
-	if d.scrollRenderer == nil {
-		glyphs := make([]scrolling.Glyph, len(d.scrollText))
-		for i := range d.scrollText {
-			r := d.scrollText[i]
-			glyphImage, letter, ok := d.fontAtlas.ExactGlyph(rune(r))
-			if ok {
-				glyphs[i] = scrolling.Glyph{Image: glyphImage, Advance: letter.Advance}
-			} else {
-				glyphs[i] = scrolling.Glyph{Advance: 32}
-			}
-		}
-		var err error
-		d.scrollRenderer, err = scrolling.New(scrolling.Config{Glyphs: glyphs})
-		if err != nil {
-			panic(err)
-		}
-	}
-	state := d.scrollRenderer.Window(letterOffset, float64(d.scrollSurf.Bounds().Dx())/scrollScaleFactor3)
-	state.X *= scrollScaleFactor3
-	state.ScaleX = scrollScaleFactor3
-	state.ScaleY = scrollScaleFactor3
-	d.scrollRenderer.DrawAt(d.scrollSurf, state)
-}
-
 func (d *CocoDemo) drawTitleWithCopperbars3(dst *ebiten.Image) {
 	if d.titleImg == nil {
 		return
@@ -1347,88 +1194,6 @@ func (d *CocoDemo) drawTitleWithCopperbars3(dst *ebiten.Image) {
 	op.GeoM.Scale(1.0, scaleY)
 	op.GeoM.Translate(titleX, 0)
 	dst.DrawImage(d.titleImg, op)
-}
-
-func (d *CocoDemo) createCurves() {
-	curves, err := presets.RibbonCurves(1)
-	if err != nil {
-		panic(err)
-	}
-	d.curves = curves[:8]
-}
-
-func (d *CocoDemo) precalcPosition() {
-	count := 0
-	d.position = make([]int, 0, len(d.scrollText))
-
-	for i := 0; i < len(d.scrollText); i++ {
-		if _, letter, ok := d.fontAtlas.ExactGlyph(rune(d.scrollText[i])); ok {
-			count += int(float64(int(letter.Advance)) * scrollScaleFactor3)
-			d.position = append(d.position, count)
-		}
-	}
-}
-
-func (d *CocoDemo) precalcMainWave() {
-	frontMainWaveTable := []int{
-		1, 1, 4, 1, 1, 2, 3, 2, 1, 5, 2, 1, 7,
-	}
-
-	var err error
-	d.frontMainWave, err = composite.JoinDeltaCurves(d.curves, frontMainWaveTable)
-	if err != nil {
-		panic(err)
-	}
-}
-
-func (d *CocoDemo) getSum3(arr []int, index, decal int) int {
-	return composite.CumulativeAt(arr, index, decal)
-}
-
-func (d *CocoDemo) getWave3(i int) int {
-	return d.getSum3(d.frontMainWave, i, 0)
-}
-
-func (d *CocoDemo) getPosition3(i int) int {
-	if i > 0 {
-		return d.getSum3(d.position, i-1, 0)
-	}
-	return 0
-}
-
-func (d *CocoDemo) advanceScrollLetter3(decalX int) {
-	if len(d.position) == 0 {
-		d.letterNum = 0
-		d.letterDecal = 0
-		return
-	}
-	for d.letterNum > 0 && decalX < d.getPosition3(d.letterNum) {
-		d.letterNum--
-	}
-	for d.getPosition3(d.letterNum+1) <= decalX {
-		d.letterNum++
-	}
-	d.letterDecal = d.getPosition3(d.letterNum)
-}
-
-func (d *CocoDemo) scrollOffset3(frontWavePos int) int {
-	decalX := d.getWave3(frontWavePos)
-	for line := 1; line < fontHeight3; line++ {
-		if wave := d.getWave3(frontWavePos + line); wave < decalX {
-			decalX = wave
-		}
-	}
-	if decalX < 0 {
-		return 0
-	}
-	return decalX
-}
-
-func (d *CocoDemo) getLetter3(pos int) byte {
-	if len(d.scrollText) == 0 {
-		return ' '
-	}
-	return d.scrollText[pos%len(d.scrollText)]
 }
 
 // ==================== VIVA TCB DEMO (Demo4) ====================
