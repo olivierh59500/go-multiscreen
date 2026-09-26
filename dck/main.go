@@ -11,6 +11,7 @@ import (
 	"github.com/olivierh59500/democonstructionkit/composite"
 	"github.com/olivierh59500/democonstructionkit/effects"
 	"github.com/olivierh59500/democonstructionkit/motion"
+	"github.com/olivierh59500/democonstructionkit/palette"
 	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/scrolling"
 	"github.com/olivierh59500/democonstructionkit/sound"
@@ -144,34 +145,6 @@ type PhenomenaDemo struct {
 	photonMotion *motion.GravityBounce
 }
 
-type GradientStop struct {
-	Color  color.RGBA
-	Offset float64
-}
-
-var (
-	gdcRasterBar = []GradientStop{
-		{color.RGBA{0x44, 0x00, 0x44, 0xFF}, 0.0},
-		{color.RGBA{0xFF, 0xDD, 0xFF, 0xFF}, 0.5},
-		{color.RGBA{0x11, 0x11, 0x44, 0xFF}, 1.0},
-	}
-	gdcRedBar = []GradientStop{
-		{color.RGBA{0x00, 0x00, 0x00, 0xFF}, 0.0},
-		{color.RGBA{0xFF, 0x33, 0x00, 0xFF}, 0.5},
-		{color.RGBA{0x00, 0x00, 0x00, 0xFF}, 1.0},
-	}
-	gdcSilverBar = []GradientStop{
-		{color.RGBA{0x55, 0x55, 0x55, 0xFF}, 0.0},
-		{color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}, 0.5},
-		{color.RGBA{0x55, 0x55, 0x55, 0xFF}, 1.0},
-	}
-	gdcPurpleBar = []GradientStop{
-		{color.RGBA{0x34, 0x22, 0x55, 0xFF}, 0.0},
-		{color.RGBA{0x60, 0x4E, 0x98, 0xFF}, 0.5},
-		{color.RGBA{0x34, 0x22, 0x55, 0xFF}, 1.0},
-	}
-)
-
 const charsetPhenomena = presets.PhenomenaAlphabet
 
 const scrollMessage = `           THIS IS IMPOSSIBLE!            WHAT IS?               THIS IS!!!                    ...SO, ANOTHER DEMO FROM PHENOMENA HAS REACHED YOU...    THIS TIME WITH CODING BY                PHOTON!                ^  RASTA MUSIC BY                    FIREFOX!                &    AND SUPER GFX BY                       TERMINATOR               #  ...SO, SLAYER! HOW DO YOU LIKE @MY@ SCROLLER?  IT'S MUCH IMPOSSIBLER THAN YOURS!    ...   SO DE SO!          DOES ANYONE HAVE A PROGRAM CALLED 'PAGE RENDER 3D'? THEN CONTACT OUR NEW GFX ARTIST AT          0492-41027               % AND ASK FOR MIKAEL. NEWS NEWS NEWS NEWS   !!! LOOK OUT FOR PHENOMENA'S NEW DISK MAG CALLED ' TRANSMISSION ' ! ! ! ! IT'S A MAG ESPECIALLY MADE FOR ALL YOU CODERS OUT THERE, COMPLETE WITH CODER / DEMO / CRACK TOP-TEN,ARTICLES ABOUT CODING / CRACKING, AND SOURCES, ETC,ETC...         HERE'S MY TOP-FIVE DEMO GROUPS 1. SCOOPEX  -SLAYER IS WORKING HARD AND HIS M.H. DEMO IS STILL UNBEATEN-  ...  2. CRYPTOBURNERS  -NICE MD 2 BUT SLOOOW VECTORS-  ... 3. RSI/PARADOX  -NICE DEMOS LATELY, EXCEPT FOR THE 'FOLLOW ME' CRAP-  ...  4. KEFRENS  -ALL YOUR LATEST DEMOS HAVE BEEN PROFESSIONAL!-  ...  5. THE LINK  -ALWAYS COOL IDEAS,GIVE US SOME MORE-  ...  OF COURSE, PHENOMENA IS EXCLUDED FROM THIS LIST...        NOW OVER TO SOME INTERNAL GREETS...  @     BIG 2A-FINISH YOUR DEMO AND BUY AN A500!   @   CORE-GET YOUR HANDS ON A WORKING AMIGA!   @   DANKO-GET BUSY!   @   KLUTTAS O SPIRIT-WAKE UP FROM YOUR COMA!!!!   @   RAVE-SAME TO YOU!       ...     AND NOW, TIME FOR SOME OTHER GREETS... THEY GO TO --- CONAN/TPL-MAKE A GOOD DEMO AND JOIN ANOTHER GROUP!   @   KALLE BALLE/TSL - EVER THOUGHT ABOUT CHANGING YOUR NAME????   @   HAVOK/ECSTASY-JOIN US! I'M JUST A PHONECALL AWAY - 0381-11344 @   MAHONEY/NS-TRY TAKING SOME IDEAS FROM NT 1.2!  @   UNCLE TOM/RAZOR-STOP DRAWING AND DO SOME MUSIC @   SLAYER/SCX-AND ALL OTHER GOOD CODERS-CALL ME FOR SOME COOL TECH-TALK    0381-11344   ZEUS/ADEPT-GOOD LUCK AND CODE HARD!       ---     NOW I DON'T HAVE VERY MUCH ELSE TO SAY, EXCEPT....                    BYE!             @@@@@@@@@@@@@                `
@@ -256,16 +229,31 @@ func (d *PhenomenaDemo) Init() error {
 		return err
 	}
 	d.imgPhoton = ebiten.NewImageFromImage(img)
-	d.imgPhotonMask = newWhiteAlphaMask(img)
-	d.rasterGrad800 = createGradient(800, 12, gdcRasterBar)
+	d.imgPhotonMask, err = composite.NewWhiteSilhouette(img)
+	if err != nil {
+		return err
+	}
+	d.rasterGrad800, err = composite.NewGradientImage(palette.GradientConfig{
+		Width: 800, Height: 12, Stops: presets.PhenomenaRasterStops(),
+	})
+	if err != nil {
+		return err
+	}
 
 	if d.state != StateMainDemoPhe {
-		d.rasterGrad640 = createGradient(640, 12, gdcRasterBar)
+		d.rasterGrad640, err = composite.NewGradientImage(palette.GradientConfig{
+			Width: 640, Height: 12, Stops: presets.PhenomenaRasterStops(),
+		})
+		if err != nil {
+			return err
+		}
 		d.initTextPages()
 	}
 
 	// Init character frames
-	d.initCharacterFrames()
+	if err := d.initCharacterFrames(); err != nil {
+		return err
+	}
 
 	// Bring message to start
 	if err := d.sliceProgram.Warmup(320, 1); err != nil {
@@ -343,77 +331,35 @@ var charToFontIndexPhe = func() func(rune) (int, bool) {
 	return lookup
 }()
 
-func createGradient(width, height int, stops []GradientStop) *ebiten.Image {
-	img := image.NewRGBA(image.Rect(0, 0, width, height))
-
-	for y := 0; y < height; y++ {
-		t := float64(y) / float64(height-1)
-
-		var c color.RGBA
-		for i := 0; i < len(stops)-1; i++ {
-			if t >= stops[i].Offset && t <= stops[i+1].Offset {
-				localT := (t - stops[i].Offset) / (stops[i+1].Offset - stops[i].Offset)
-				c = lerpColor(stops[i].Color, stops[i+1].Color, localT)
-				break
-			}
-		}
-
-		row := img.Pix[y*img.Stride : y*img.Stride+width*4]
-		for x := 0; x < len(row); x += 4 {
-			row[x] = c.R
-			row[x+1] = c.G
-			row[x+2] = c.B
-			row[x+3] = c.A
-		}
+func (d *PhenomenaDemo) initCharacterFrames() error {
+	gradient := func(height int, stops []palette.GradientStop) (*ebiten.Image, error) {
+		return composite.NewGradientImage(palette.GradientConfig{Width: 480, Height: height, Stops: stops})
 	}
-
-	return ebiten.NewImageFromImage(img)
-}
-
-// newWhiteAlphaMask preserves a source image's silhouette while making every
-// visible pixel white. Tinting this with ColorScale is equivalent to replacing
-// RGB with a flat colour through ColorM, but it keeps Ebitengine's standard
-// shader and therefore remains batchable with adjacent sprites.
-func newWhiteAlphaMask(source image.Image) *ebiten.Image {
-	bounds := source.Bounds()
-	mask := image.NewNRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		row := mask.Pix[(y-bounds.Min.Y)*mask.Stride:]
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			_, _, _, alpha := source.At(x, y).RGBA()
-			offset := (x - bounds.Min.X) * 4
-			row[offset] = 0xff
-			row[offset+1] = 0xff
-			row[offset+2] = 0xff
-			row[offset+3] = uint8(alpha >> 8)
-		}
+	core, err := gradient(9, presets.PhenomenaCoreStops())
+	if err != nil {
+		return err
 	}
-	return ebiten.NewImageFromImage(mask)
-}
-
-func lerpColor(c1, c2 color.RGBA, t float64) color.RGBA {
-	r := uint8(float64(c1.R)*(1-t) + float64(c2.R)*t)
-	g := uint8(float64(c1.G)*(1-t) + float64(c2.G)*t)
-	b := uint8(float64(c1.B)*(1-t) + float64(c2.B)*t)
-	a := uint8(float64(c1.A)*(1-t) + float64(c2.A)*t)
-
-	return color.RGBA{r, g, b, a}
-}
-
-func (d *PhenomenaDemo) initCharacterFrames() {
-	core, front, back := createGradient(480, 9, gdcRedBar), createGradient(480, 33, gdcSilverBar), createGradient(480, 33, gdcPurpleBar)
 	defer core.Deallocate()
+	front, err := gradient(33, presets.PhenomenaFrontStops())
+	if err != nil {
+		return err
+	}
 	defer front.Deallocate()
+	back, err := gradient(33, presets.PhenomenaBackStops())
+	if err != nil {
+		return err
+	}
 	defer back.Deallocate()
 	glyphs, err := scrolling.GridImages(d.imgFont, image.Pt(16, 26), len(charsetPhenomena), len(charsetPhenomena))
 	if err != nil {
-		panic(err)
+		return err
 	}
 	d.dnaFrames, err = scrolling.NewDNAFrames(glyphs, scrolling.DNAFrameConfig{Frames: 30, Height: 33, Step: 2.25, Front: front, Back: back, Core: core, CoreY: 12})
 	if err != nil {
-		panic(err)
+		return err
 	}
 	d.cnvFrames = d.dnaFrames.Image
+	return nil
 }
 
 func (d *PhenomenaDemo) Update() error {
@@ -609,7 +555,7 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 		// Draw photon with color cycling (centered)
 		op = &ebiten.DrawImageOptions{}
 		hue := d.color / 360.0
-		r, g, b := hslToRGB(hue, 1.0, 0.5)
+		r, g, b := palette.HSLToRGB(hue, 1.0, 0.5)
 		op.ColorScale.Scale(float32(r), float32(g), float32(b), 1)
 		op.GeoM.Translate(365, 555) // Centered: 285 + 80 = 365, bottom adjusted
 		screen.DrawImage(d.imgPhotonMask, op)
@@ -628,46 +574,6 @@ func (d *PhenomenaDemo) drawScroller(screen *ebiten.Image) {
 		panic(err)
 	}
 	d.sliceProgram.Draw(screen, d.dnaFrames, d.dnaDraw)
-}
-
-func hslToRGB(h, s, l float64) (float64, float64, float64) {
-	var r, g, b float64
-
-	if s == 0 {
-		r, g, b = l, l, l
-	} else {
-		var hue2rgb = func(p, q, t float64) float64 {
-			if t < 0 {
-				t += 1
-			}
-			if t > 1 {
-				t -= 1
-			}
-			if t < 1.0/6.0 {
-				return p + (q-p)*6*t
-			}
-			if t < 1.0/2.0 {
-				return q
-			}
-			if t < 2.0/3.0 {
-				return p + (q-p)*(2.0/3.0-t)*6
-			}
-			return p
-		}
-
-		var q float64
-		if l < 0.5 {
-			q = l * (1 + s)
-		} else {
-			q = l + s - l*s
-		}
-		p := 2*l - q
-		r = hue2rgb(p, q, h+1.0/3.0)
-		g = hue2rgb(p, q, h)
-		b = hue2rgb(p, q, h-1.0/3.0)
-	}
-
-	return r, g, b
 }
 
 // ==================== TCB DEMO (Demo2) ====================
