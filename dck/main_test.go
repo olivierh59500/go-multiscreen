@@ -26,7 +26,7 @@ func TestTCBScrollShaderCompiles(t *testing.T) {
 }
 
 func TestCompositeShaderCompiles(t *testing.T) {
-	shader, err := ebiten.NewShader([]byte(compositeShaderSource))
+	shader, err := ebiten.NewShader([]byte(presets.MultiscreenCompositeShaderSource))
 	if err != nil {
 		t.Fatalf("compile camera compositor shader: %v", err)
 	}

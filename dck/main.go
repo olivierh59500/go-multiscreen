@@ -2,7 +2,6 @@ package multiscreen
 
 import (
 	"bytes"
-	"fmt"
 	kit "github.com/olivierh59500/democonstructionkit"
 	"image"
 	"image/color"
@@ -28,61 +27,12 @@ import (
 )
 
 const (
-	demoWidth    = 800
-	demoHeight   = 600
-	screenWidth  = 1600
-	screenHeight = 1200
-	sampleRate   = 44100
+	demoWidth  = 800
+	demoHeight = 600
+	sampleRate = 44100
 )
 
-const compositeShaderSource = `//kage:unit pixels
-
-package main
-
-var CameraCenter vec2
-var CameraZoom float
-
-func Fragment(dstPos vec4, srcPos vec2, color vec4) vec4 {
-	screenPos := srcPos - imageSrc0Origin()
-	worldPos := (screenPos - vec2(400, 300)) / CameraZoom + CameraCenter
-	if worldPos.x < 0 || worldPos.y < 0 || worldPos.x >= 1600 || worldPos.y >= 1200 {
-		return vec4(0, 0, 0, 1)
-	}
-
-	sourceOrigin := imageSrc0Origin()
-	if worldPos.y < 600 {
-		if worldPos.x < 800 {
-			return imageSrc0UnsafeAt(sourceOrigin + worldPos)
-		}
-		return imageSrc1UnsafeAt(sourceOrigin + worldPos - vec2(800, 0))
-	}
-
-	if worldPos.x < 800 {
-		return imageSrc3UnsafeAt(sourceOrigin + worldPos - vec2(0, 600))
-	}
-	return imageSrc2UnsafeAt(sourceOrigin + worldPos - vec2(800, 600))
-}
-`
-
-var musicData = originalassets.
-
-	// Camera states
-	DCKAssetMusicData()
-
-type CameraState int
-
-const (
-	StateDemo1             CameraState = presets.MultiscreenView1
-	StateTransition1to2    CameraState = presets.MultiscreenMove12
-	StateDemo2             CameraState = presets.MultiscreenView2
-	StateTransition2to3    CameraState = presets.MultiscreenMove23
-	StateDemo3             CameraState = presets.MultiscreenView3
-	StateTransition3to4    CameraState = presets.MultiscreenMove34
-	StateDemo4             CameraState = presets.MultiscreenView4
-	StateTransition4toZoom CameraState = presets.MultiscreenZoomOut
-	StateZoomOut           CameraState = presets.MultiscreenOverview
-	StateLoop              CameraState = presets.MultiscreenLoop
-)
+var musicData = originalassets.DCKAssetMusicData()
 
 // ==================== PHENOMENA DEMO (Demo1) ====================
 
@@ -1130,46 +1080,22 @@ type MegaDemoGame struct {
 	demo3 *CocoDemo
 	demo4 *VivaDemo
 
-	demoCanvases      [4]*ebiten.Image
-	compositeShader   *ebiten.Shader
-	compositeCenter   [2]float32
-	compositeUniforms map[string]any
-
 	audioContext *audio.Context
 	audioPlayer  *audio.Player
 	musicStream  *sound.Stream
 
-	cameraState CameraState
-	cameraTour  *motion.CameraTour
-	needsRedraw bool
+	tourRenderer *composite.SceneTour
 }
 
 func NewMegaDemoGame() *MegaDemoGame {
 	g := &MegaDemoGame{
-		demo1: NewPhenomenaDemo(),
-		demo2: NewTCBDemo(),
-		demo3: NewCocoDemo(),
-		demo4: NewVivaDemo(),
-		demoCanvases: [4]*ebiten.Image{
-			ebiten.NewImage(demoWidth, demoHeight),
-			ebiten.NewImage(demoWidth, demoHeight),
-			ebiten.NewImage(demoWidth, demoHeight),
-			ebiten.NewImage(demoWidth, demoHeight),
-		},
-		cameraState:  StateDemo1,
-		needsRedraw:  true,
+		demo1:        NewPhenomenaDemo(),
+		demo2:        NewTCBDemo(),
+		demo3:        NewCocoDemo(),
+		demo4:        NewVivaDemo(),
 		audioContext: audio.NewContext(sampleRate),
 	}
-	g.tour()
-	var shaderErr error
-	g.compositeShader, shaderErr = ebiten.NewShader([]byte(compositeShaderSource))
-	if shaderErr != nil {
-		log.Printf("Failed to compile camera compositor shader: %v", shaderErr)
-	}
-	g.compositeUniforms = map[string]any{
-		"CameraCenter": g.compositeCenter[:],
-		"CameraZoom":   float32(1),
-	}
+	g.renderer()
 
 	// Initialize music
 	var err error
@@ -1190,135 +1116,41 @@ func NewMegaDemoGame() *MegaDemoGame {
 	return g
 }
 
-// tour also initializes minimal capture fixtures that construct MegaDemoGame
-// directly without opening the audio device or creating a window.
-func (g *MegaDemoGame) tour() *motion.CameraTour {
-	if g.cameraTour == nil {
-		var err error
-		g.cameraTour, err = motion.NewCameraTour(presets.MultiscreenCameraTour())
-		if err != nil {
-			panic(err)
-		}
+func (g *MegaDemoGame) renderer() *composite.SceneTour {
+	if g.tourRenderer != nil {
+		return g.tourRenderer
 	}
-	return g.cameraTour
+	camera, err := motion.NewCameraTour(presets.MultiscreenCameraTour())
+	if err != nil {
+		panic(err)
+	}
+	config := composite.SceneTourConfig{
+		Camera: camera, TileWidth: demoWidth, TileHeight: demoHeight,
+		ViewportWidth: demoWidth, ViewportHeight: demoHeight,
+		Sources: []composite.TourSource{g.demo1, g.demo2, g.demo3, g.demo4},
+		Names:   []string{"phenomena demo", "tcb demo", "coco demo", "viva demo"},
+		TileOrigins: []image.Point{
+			image.Pt(0, 0), image.Pt(demoWidth, 0),
+			image.Pt(demoWidth, demoHeight), image.Pt(0, demoHeight),
+		},
+		ShaderSource: []byte(presets.MultiscreenCompositeShaderSource),
+		OnShaderError: func(err error) {
+			log.Printf("Failed to compile camera compositor shader: %v", err)
+		},
+	}
+	g.tourRenderer, err = composite.NewSceneTour(config)
+	if err != nil {
+		panic(err)
+	}
+	return g.tourRenderer
 }
 
 func (g *MegaDemoGame) Update() error {
-	g.needsRedraw = true
-
-	// Keep every screen synchronized so transitions and the zoomed-out view
-	// always reveal a continuously running demo.
-	if err := g.demo1.Update(); err != nil {
-		return fmt.Errorf("phenomena demo: %w", err)
-	}
-	if err := g.demo2.Update(); err != nil {
-		return fmt.Errorf("tcb demo: %w", err)
-	}
-	if err := g.demo3.Update(); err != nil {
-		return fmt.Errorf("coco demo: %w", err)
-	}
-	if err := g.demo4.Update(); err != nil {
-		return fmt.Errorf("viva demo: %w", err)
-	}
-
-	g.tour().Step()
-	g.cameraState = CameraState(g.cameraTour.State().Segment)
-
-	return nil
+	return g.renderer().Update()
 }
 
 func (g *MegaDemoGame) Draw(screen *ebiten.Image) {
-	if !g.needsRedraw {
-		return
-	}
-	g.needsRedraw = false
-
-	// The four stable camera states cover the whole screen. Drawing directly
-	// avoids a full 800x600 render target and copy on the common path.
-	switch g.cameraState {
-	case StateDemo1:
-		g.demo1.Draw(screen)
-		return
-	case StateDemo2:
-		g.demo2.Draw(screen)
-		return
-	case StateDemo3:
-		g.demo3.Draw(screen)
-		return
-	case StateDemo4:
-		g.demo4.Draw(screen)
-		return
-	}
-
-	pose := g.tour().State()
-	centerX, centerY, zoom, mask := pose.CenterX, pose.CenterY, pose.Zoom, pose.VisibleMask
-
-	for demoIndex := 0; demoIndex < len(g.demoCanvases); demoIndex++ {
-		if mask&(1<<demoIndex) == 0 {
-			continue
-		}
-		g.renderDemo(demoIndex)
-	}
-
-	if g.compositeShader != nil {
-		g.compositeCenter[0], g.compositeCenter[1] = float32(centerX), float32(centerY)
-		g.compositeUniforms["CameraZoom"] = float32(zoom)
-		op := &ebiten.DrawRectShaderOptions{Uniforms: g.compositeUniforms, Blend: ebiten.BlendCopy}
-		for i, canvas := range g.demoCanvases {
-			if mask&(1<<i) != 0 {
-				op.Images[i] = canvas
-			}
-		}
-		screen.DrawRectShader(demoWidth, demoHeight, g.compositeShader, op)
-		return
-	}
-
-	// Compilation is covered by tests, but retain a conventional fallback for
-	// graphics backends that reject the shader at runtime.
-	screen.Fill(color.Black)
-	for demoIndex := 0; demoIndex < len(g.demoCanvases); demoIndex++ {
-		if mask&(1<<demoIndex) == 0 {
-			continue
-		}
-		originX, originY := demoOrigin(demoIndex)
-		op := &ebiten.DrawImageOptions{}
-		op.GeoM.Translate(originX-centerX, originY-centerY)
-		op.GeoM.Scale(zoom, zoom)
-		op.GeoM.Translate(float64(demoWidth)/2, float64(demoHeight)/2)
-		screen.DrawImage(g.demoCanvases[demoIndex], op)
-	}
-}
-
-func demoOrigin(index int) (float64, float64) {
-	switch index {
-	case 0:
-		return 0, 0
-	case 1:
-		return demoWidth, 0
-	case 2:
-		return demoWidth, demoHeight
-	case 3:
-		return 0, demoHeight
-	default:
-		panic("invalid demo index")
-	}
-}
-
-func (g *MegaDemoGame) renderDemo(index int) *ebiten.Image {
-	canvas := g.demoCanvases[index]
-	switch index {
-	case 0:
-		g.demo1.Draw(canvas)
-	case 1:
-		g.demo2.Draw(canvas)
-	case 2:
-		g.demo3.Draw(canvas)
-	case 3:
-		g.demo4.Draw(canvas)
-	default:
-		panic("invalid demo index")
-	}
-	return canvas
+	g.renderer().Draw(screen)
 }
 
 func (g *MegaDemoGame) Layout(outsideWidth, outsideHeight int) (int, int) {

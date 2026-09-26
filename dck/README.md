@@ -11,7 +11,7 @@ provides the configured stereo PCM format. The demo keeps its playback level and
 
 ## Shared component effects
 
-The Phenomena and TCB scenes use the same `DNAFrames`, `SliceProgram`, `RecurrentRowWave`, `ScalarStages`, reusable gradient/silhouette materials, `Planes` and `PlaneRenderer` implementations as their standalone DCK demos. Their artwork and authored layer order remain local. `motion.CameraTour` now owns the camera's held views, eased movement, zoom and source visibility; this screen still owns the retained transition images and their composite shader.
+The Phenomena and TCB scenes use the same `DNAFrames`, `SliceProgram`, `RecurrentRowWave`, `ScalarStages`, reusable gradient/silhouette materials, `Planes` and `PlaneRenderer` implementations as their standalone DCK demos. Their artwork and authored layer order remain local. `composite.SceneTour` now owns the camera's held views, easing, zoom, visibility masks, retained transition images and shader composition.
 
 The embedded Coco panel now shares `composite.CopperBars` with Bilizir and
 standalone Coco. Its integer clocks and 36 cached image strips remain visually
