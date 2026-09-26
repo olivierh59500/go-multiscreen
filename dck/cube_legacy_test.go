@@ -6,6 +6,10 @@ import (
 	"math"
 )
 
+func stepSinCosForward(sinValue, cosValue, sinStep, cosStep float64) (float64, float64) {
+	return sinValue*cosStep + cosValue*sinStep, cosValue*cosStep - sinValue*sinStep
+}
+
 // Frozen pre-extraction renderer, retained only as an independent fidelity oracle.
 type legacyMultiCube struct {
 	angleX float64

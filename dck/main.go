@@ -931,21 +931,11 @@ var demo3FontData = originalassets.DCKAssetDemo3FontData()
 
 const (
 	nbCubes3           = 12
-	nbDMALogos3        = 16
 	cocoScrollPadding3 = "     "
 	cocoScrollText3    = cocoScrollPadding3 + cocoScrollPadding3 +
 		"WELCOME TO THE COCO IS THE BEST DEMO! " + cocoScrollPadding3 +
 		"THIS DEMO COMBINES THE BEST EFFECTS FROM VARIOUS ATARI ST DEMOS. " + cocoScrollPadding3 +
 		"GREETINGS TO ALL DEMOSCENE LOVERS! " + cocoScrollPadding3 + cocoScrollPadding3
-)
-
-type DMASprite3 struct {
-	x, y float64
-}
-
-var (
-	cocoDMAPhaseOffsets3 = [4]float64{1.25, 0.54, 0.23, 0.98}
-	cocoDMAPhaseDeltas3  = [4]float64{0.02 * 1.35, 0.02 * 1.86, 0.02 * 1.72, 0.02 * 1.63}
 )
 
 type CocoDemo struct {
@@ -961,12 +951,8 @@ type CocoDemo struct {
 	// Batched 3D cube procession with reanchored harmonic motion.
 	cubeTrain *effects.SolidCubeTrain
 
-	// DMA logo sprites (16 logos in 4x4 grid)
-	dmaSprites [nbDMALogos3]DMASprite3
-	dmaSin     [4]float64
-	dmaCos     [4]float64
-	dmaStepSin [4]float64
-	dmaStepCos [4]float64
+	// Shared sixteen-logo grid with reanchored harmonic translation.
+	logoFormation *sprites.Group
 
 	// Shared harmonic backdrop with Coco's embedded texture phase.
 	roto *composite.RotozoomBackground
@@ -991,11 +977,6 @@ func NewCocoDemo() *CocoDemo {
 	if err != nil {
 		panic(err)
 	}
-	for i := range d.dmaSin {
-		d.dmaSin[i], d.dmaCos[i] = math.Sincos(cocoDMAPhaseOffsets3[i])
-		d.dmaStepSin[i], d.dmaStepCos[i] = math.Sincos(cocoDMAPhaseDeltas3[i])
-	}
-
 	return d
 }
 
@@ -1044,6 +1025,10 @@ func (d *CocoDemo) Init() error {
 		log.Printf("Error loading DMA logo: %v", err)
 	} else {
 		d.dmaLogoImg = ebiten.NewImageFromImage(img)
+		d.logoFormation, err = sprites.NewGroup(presets.MultiscreenCocoLogoFormation(d.dmaLogoImg, demoWidth, demoHeight))
+		if err != nil {
+			return err
+		}
 	}
 
 	img, _, err = image.Decode(bytes.NewReader(demo3FontData))
@@ -1094,29 +1079,10 @@ func (d *CocoDemo) Update() error {
 		return err
 	}
 
-	// Update DMA logo sprites - synchronized movement
-	for i := range d.dmaSin {
-		if d.iteration&1023 == 0 {
-			phase := cocoDMAPhaseOffsets3[i] + float64(d.iteration)*cocoDMAPhaseDeltas3[i]
-			d.dmaSin[i], d.dmaCos[i] = math.Sincos(math.Mod(phase, 2*math.Pi))
-		} else {
-			d.dmaSin[i], d.dmaCos[i] = stepSinCosForward(
-				d.dmaSin[i], d.dmaCos[i], d.dmaStepSin[i], d.dmaStepCos[i],
-			)
+	if d.logoFormation != nil {
+		if err := d.logoFormation.Update(kit.Frame{}); err != nil {
+			return err
 		}
-	}
-	baseX := 100*d.dmaSin[0] + 100*d.dmaSin[1]
-	baseY := 60*d.dmaCos[2] + 60*d.dmaCos[3]
-
-	for i := 0; i < nbDMALogos3; i++ {
-		row := i / 4
-		col := i % 4
-		centerX := float64(demoWidth) / 2
-		centerY := 72 + float64(demoHeight-72)/2
-		offsetX := (float64(col) - 1.5) * 200
-		offsetY := (float64(row) - 1.5) * 140
-		d.dmaSprites[i].x = centerX + offsetX + baseX
-		d.dmaSprites[i].y = centerY + offsetY + baseY
 	}
 
 	if d.roto != nil {
@@ -1147,33 +1113,16 @@ func (d *CocoDemo) Draw(screen *ebiten.Image) {
 		d.scroll.Draw(screen)
 	}
 
-	// 3. DMA logo sprites
-	d.drawDMALogos3(screen)
+	// 3. Synchronized DMA logo formation
+	if d.logoFormation != nil {
+		d.logoFormation.Draw(screen)
+	}
 
 	// 4. Batched 3D cubes
 	d.cubeTrain.Draw(screen)
 
 	// 5. Title logo with copper bars on top
 	d.drawTitleWithCopperbars3(screen)
-}
-
-func (d *CocoDemo) drawDMALogos3(dst *ebiten.Image) {
-	if d.dmaLogoImg == nil {
-		return
-	}
-
-	logoW := float64(d.dmaLogoImg.Bounds().Dx())
-	logoH := float64(d.dmaLogoImg.Bounds().Dy())
-	scale := 0.5
-
-	for _, sprite := range d.dmaSprites {
-		op := &ebiten.DrawImageOptions{}
-		op.GeoM.Translate(-logoW/2, -logoH/2)
-		op.GeoM.Scale(scale, scale)
-		op.GeoM.Translate(sprite.x, sprite.y)
-		op.ColorScale.Scale(1, 1, 1, 0.6)
-		dst.DrawImage(d.dmaLogoImg, op)
-	}
 }
 
 func (d *CocoDemo) drawTitleWithCopperbars3(dst *ebiten.Image) {
@@ -1330,10 +1279,6 @@ func (d *VivaDemo) Init() error {
 
 	d.initialized = true
 	return nil
-}
-
-func stepSinCosForward(sinValue, cosValue, sinStep, cosStep float64) (float64, float64) {
-	return sinValue*cosStep + cosValue*sinStep, cosValue*cosStep - sinValue*sinStep
 }
 
 func (d *VivaDemo) Update() error {

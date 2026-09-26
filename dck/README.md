@@ -26,6 +26,9 @@ The embedded Coco text now uses the complete `scrolling.Config.Scanline`
 transport. Its preset keeps the panel's proportional font, cumulative wave,
 three-pixel strip mesh, bounce, source-window split and continuous message loop;
 the local cursor and triangle-building functions have been removed.
+The sixteen DMA logos now use `sprites.Group` with a 4 × 4 grid and a shared
+recurrent harmonic translation. DCK owns the four phase clocks and their
+1,024-tick reanchor; the panel supplies only its image and rendering order.
 
 See the [DCK effect configuration guide](../../../lib/democonstructionkit/docs/EFFECT_OPTIONS.md) for the shared API and examples.
 

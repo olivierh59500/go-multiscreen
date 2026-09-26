@@ -74,27 +74,21 @@ func TestCubeGeometryIsAllocationFree(t *testing.T) {
 	}
 }
 
-func TestCocoDMALogoRecurrences(t *testing.T) {
-	var dmaSin, dmaCos, dmaStepSin, dmaStepCos [4]float64
-	for i := range dmaSin {
-		dmaSin[i], dmaCos[i] = math.Sincos(cocoDMAPhaseOffsets3[i])
-		dmaStepSin[i], dmaStepCos[i] = math.Sincos(cocoDMAPhaseDeltas3[i])
+func TestCocoLogoPresetKeepsAuthoredGridAndClocks(t *testing.T) {
+	config := presets.MultiscreenCocoLogoFormation(nil, demoWidth, demoHeight)
+	if config.Count != 16 || config.Grid == nil || config.Grid.Columns != 4 ||
+		config.Grid.StepX != 200 || config.Grid.StepY != 140 ||
+		config.Origin.X != 400 || config.Origin.Y != 336 ||
+		config.ScaleX != .5 || config.ScaleY != .5 || config.Opacity != .6 ||
+		!config.AlphaOnly || config.RecurrentTranslation == nil || config.Translation != nil {
+		t.Fatalf("Coco logo grid changed: %+v", config)
 	}
-
-	for iteration := 1; iteration <= 10_000; iteration++ {
-		for i := range dmaSin {
-			if iteration&1023 == 0 {
-				phase := cocoDMAPhaseOffsets3[i] + float64(iteration)*cocoDMAPhaseDeltas3[i]
-				dmaSin[i], dmaCos[i] = math.Sincos(math.Mod(phase, 2*math.Pi))
-			} else {
-				dmaSin[i], dmaCos[i] = stepSinCosForward(dmaSin[i], dmaCos[i], dmaStepSin[i], dmaStepCos[i])
-			}
-			phase := cocoDMAPhaseOffsets3[i] + float64(iteration)*cocoDMAPhaseDeltas3[i]
-			wantSin, wantCos := math.Sincos(phase)
-			if math.Abs(dmaSin[i]-wantSin) > 1e-11 || math.Abs(dmaCos[i]-wantCos) > 1e-11 {
-				t.Fatalf("DMA recurrence %d drift at iteration %d", i, iteration)
-			}
-		}
+	clocks := config.RecurrentTranslation
+	if clocks.PhaseStep != .02 || clocks.ReanchorEvery != 1024 ||
+		len(clocks.XStepDeltas) != 2 || len(clocks.YStepDeltas) != 2 ||
+		clocks.XStepDeltas[0] != .02*1.35 || clocks.XStepDeltas[1] != .02*1.86 ||
+		clocks.YStepDeltas[0] != .02*1.72 || clocks.YStepDeltas[1] != .02*1.63 {
+		t.Fatalf("Coco logo recurrence changed: %+v", clocks)
 	}
 }
 
