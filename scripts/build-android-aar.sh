@@ -5,6 +5,11 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repository_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 output_file=${1:-"$repository_dir/android/app/libs/multiscreen.aar"}
+mobile_package=${EBITENMOBILE_PACKAGE:-./mobile}
+case "$mobile_package" in
+	./mobile|./dck/mobile) ;;
+	*) echo "EBITENMOBILE_PACKAGE must be ./mobile or ./dck/mobile." >&2; exit 2 ;;
+esac
 
 android_sdk=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}
 if [ -z "$android_sdk" ]; then
@@ -86,4 +91,4 @@ run_ebitenmobile bind \
 	-trimpath \
 	-ldflags="-s -w" \
 	-o "$output_file" \
-	./mobile
+	"$mobile_package"
