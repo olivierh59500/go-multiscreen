@@ -149,6 +149,8 @@ type PhenomenaDemo struct {
 	// Scroller data
 	sliceStream *scrolling.SliceStream
 	sineOffsets [240]float64
+	rowWave     *motion.RecurrentRowWave
+	dnaDraw     scrolling.DNADrawConfig
 }
 
 type GradientStop struct {
@@ -216,6 +218,12 @@ func NewPhenomenaDemo() *PhenomenaDemo {
 	}
 
 	d.initSliceStream()
+	wave, err := motion.NewRecurrentRowWave(presets.PhenomenaDNARows())
+	if err != nil {
+		panic(err)
+	}
+	d.rowWave = wave
+	d.dnaDraw = scrolling.DNADrawConfig{SliceWidth: 2, ScaleX: 1.67, ScaleY: 1.875, OriginY: 195, Y: wave.At}
 	return d
 }
 
@@ -697,17 +705,10 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 }
 
 func (d *PhenomenaDemo) drawScroller(screen *ebiten.Image) {
-	t2 := d.t
-	ws, wc := math.Sincos(5*10.50 + d.t/6)
-	d.dnaFrames.DrawSlices(screen, d.sliceStream.Slices(), d.sliceStream.Head(), scrolling.DNADrawConfig{SliceWidth: 2, ScaleX: 1.67, ScaleY: 1.875, OriginY: 195, Y: func(i int) float64 {
-		y := 80.0
-		if t2 > 5*50-float64(i)*.0033 {
-			y = 80 * wc
-		}
-		t2 += 1.0 / 6.0
-		ws, wc = ws*phenomenaWaveCosStep+wc*phenomenaWaveSinStep, wc*phenomenaWaveCosStep-ws*phenomenaWaveSinStep
-		return 67 + y
-	}})
+	if err := d.rowWave.Begin(d.t); err != nil {
+		panic(err)
+	}
+	d.dnaFrames.DrawSlices(screen, d.sliceStream.Slices(), d.sliceStream.Head(), d.dnaDraw)
 }
 
 func hslToRGB(h, s, l float64) (float64, float64, float64) {
