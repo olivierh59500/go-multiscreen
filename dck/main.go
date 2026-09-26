@@ -10,7 +10,6 @@ import (
 
 	"github.com/olivierh59500/democonstructionkit/composite"
 	"github.com/olivierh59500/democonstructionkit/effects"
-	"github.com/olivierh59500/democonstructionkit/geometry"
 	"github.com/olivierh59500/democonstructionkit/motion"
 	"github.com/olivierh59500/democonstructionkit/presets"
 	"github.com/olivierh59500/democonstructionkit/scrolling"
@@ -971,11 +970,6 @@ type DMASprite3 struct {
 }
 
 var (
-	cocoCubePathSinStep3, cocoCubePathCosStep3 = math.Sincos(0.04)
-	cocoCubeBobSinStep3, cocoCubeBobCosStep3   = math.Sincos(0.1)
-)
-
-var (
 	cocoDMAPhaseOffsets3 = [4]float64{1.25, 0.54, 0.23, 0.98}
 	cocoDMAPhaseDeltas3  = [4]float64{0.02 * 1.35, 0.02 * 1.86, 0.02 * 1.72, 0.02 * 1.63}
 )
@@ -991,17 +985,11 @@ type CocoDemo struct {
 	fontImg    *ebiten.Image
 
 	scrollSurf *ebiten.Image
-	cubeBatch  *effects.SolidCubeBatch
 
 	fontAtlas *scrolling.Atlas
 
-	// 3D Cubes
-	cubes         [nbCubes3]*effects.SolidCube
-	spritePos     [nbCubes3]float64
-	spritePathSin [nbCubes3]float64
-	spritePathCos [nbCubes3]float64
-	spriteBobSin  [nbCubes3]float64
-	spriteBobCos  [nbCubes3]float64
+	// Batched 3D cube procession with reanchored harmonic motion.
+	cubeTrain *effects.SolidCubeTrain
 
 	// DMA logo sprites (16 logos in 4x4 grid)
 	dmaSprites [nbDMALogos3]DMASprite3
@@ -1040,7 +1028,6 @@ type CocoDemo struct {
 func NewCocoDemo() *CocoDemo {
 	d := &CocoDemo{
 		scrollSurf:     ebiten.NewImage(int(float64(demoWidth)*scrollSurfWidthFactor3), int(float64(fontHeight3)*scrollScaleFactor3)),
-		cubeBatch:      effects.NewSolidCubeBatch(nbCubes3),
 		scrollVertices: make([]ebiten.Vertex, 0, ((demoHeight-72)/scrollScaleInt3)*8),
 		scrollIndices:  make([]uint16, 0, ((demoHeight-72)/scrollScaleInt3)*12),
 		logoX:          0.5,
@@ -1048,17 +1035,10 @@ func NewCocoDemo() *CocoDemo {
 		scrollText:     cocoScrollText3,
 	}
 
-	// Init 3D cubes
-	for i := 0; i < nbCubes3; i++ {
-		var err error
-		d.cubes[i], err = effects.NewSolidCube(presets.MultiscreenCocoCube(40))
-		if err != nil {
-			panic(err)
-		}
-		d.cubes[i].Rotation = geometry.Vec3{X: float64(i) * .3, Y: float64(i) * .2, Z: float64(i) * .1}
-		d.spritePos[i] = float64(0.15) * float64(i+1)
-		d.spritePathSin[i], d.spritePathCos[i] = math.Sincos(d.spritePos[i])
-		d.spriteBobSin[i], d.spriteBobCos[i] = math.Sincos(d.spritePos[i] * 2.5)
+	var err error
+	d.cubeTrain, err = effects.NewSolidCubeTrain(presets.MultiscreenCocoCubeTrain(demoWidth, demoHeight, 40, nbCubes3))
+	if err != nil {
+		panic(err)
 	}
 	for i := range d.dmaSin {
 		d.dmaSin[i], d.dmaCos[i] = math.Sincos(cocoDMAPhaseOffsets3[i])
@@ -1149,27 +1129,8 @@ func (d *CocoDemo) Update() error {
 		}
 	}
 
-	// Update 3D cubes
-	for i := 0; i < nbCubes3; i++ {
-		d.spritePos[i] += 0.04
-		if d.iteration&1023 == 0 {
-			// 4π is a common period of sin(p) and cos(2.5p).
-			d.spritePos[i] = math.Mod(d.spritePos[i], 4*math.Pi)
-			d.spritePathSin[i], d.spritePathCos[i] = math.Sincos(d.spritePos[i])
-			d.spriteBobSin[i], d.spriteBobCos[i] = math.Sincos(d.spritePos[i] * 2.5)
-		} else {
-			d.spritePathSin[i], d.spritePathCos[i] = stepSinCosForward(
-				d.spritePathSin[i], d.spritePathCos[i], cocoCubePathSinStep3, cocoCubePathCosStep3,
-			)
-			d.spriteBobSin[i], d.spriteBobCos[i] = stepSinCosForward(
-				d.spriteBobSin[i], d.spriteBobCos[i], cocoCubeBobSinStep3, cocoCubeBobCosStep3,
-			)
-		}
-		d.cubes[i].Rotate(
-			0.02*(1+float64(i)*0.1),
-			0.03*(1+float64(i)*0.15),
-			0.01*(1+float64(i)*0.05),
-		)
+	if err := d.cubeTrain.Update(kit.Frame{}); err != nil {
+		return err
 	}
 
 	// Update DMA logo sprites - synchronized movement
@@ -1223,8 +1184,8 @@ func (d *CocoDemo) Draw(screen *ebiten.Image) {
 	// 3. DMA logo sprites
 	d.drawDMALogos3(screen)
 
-	// 4. 3D cubes
-	d.draw3DCubes3(screen)
+	// 4. Batched 3D cubes
+	d.cubeTrain.Draw(screen)
 
 	// 5. Title logo with copper bars on top
 	d.drawTitleWithCopperbars3(screen)
@@ -1378,16 +1339,6 @@ func (d *CocoDemo) displayText3(letterOffset int) {
 	state.ScaleX = scrollScaleFactor3
 	state.ScaleY = scrollScaleFactor3
 	d.scrollRenderer.DrawAt(d.scrollSurf, state)
-}
-
-func (d *CocoDemo) draw3DCubes3(dst *ebiten.Image) {
-	d.cubeBatch.Reset()
-	for i := 0; i < nbCubes3; i++ {
-		xPos := float64((demoWidth-40)/2) + float64((demoWidth-40)/2)*d.spritePathSin[i]
-		yPos := float64(demoHeight)/2 + 84*d.spriteBobCos[i]
-		d.cubeBatch.Add(d.cubes[i], xPos, yPos)
-	}
-	d.cubeBatch.Draw(dst)
 }
 
 func (d *CocoDemo) drawTitleWithCopperbars3(dst *ebiten.Image) {

@@ -71,11 +71,7 @@ func TestCubeGeometryIsAllocationFree(t *testing.T) {
 	}
 }
 
-func TestCocoMotionRecurrences(t *testing.T) {
-	position := 0.15
-	pathSin, pathCos := math.Sincos(position)
-	bobSin, bobCos := math.Sincos(position * 2.5)
-
+func TestCocoDMALogoRecurrences(t *testing.T) {
 	var dmaSin, dmaCos, dmaStepSin, dmaStepCos [4]float64
 	for i := range dmaSin {
 		dmaSin[i], dmaCos[i] = math.Sincos(cocoDMAPhaseOffsets3[i])
@@ -83,22 +79,6 @@ func TestCocoMotionRecurrences(t *testing.T) {
 	}
 
 	for iteration := 1; iteration <= 10_000; iteration++ {
-		position += 0.04
-		if iteration&1023 == 0 {
-			position = math.Mod(position, 4*math.Pi)
-			pathSin, pathCos = math.Sincos(position)
-			bobSin, bobCos = math.Sincos(position * 2.5)
-		} else {
-			pathSin, pathCos = stepSinCosForward(pathSin, pathCos, cocoCubePathSinStep3, cocoCubePathCosStep3)
-			bobSin, bobCos = stepSinCosForward(bobSin, bobCos, cocoCubeBobSinStep3, cocoCubeBobCosStep3)
-		}
-		wantPathSin, wantPathCos := math.Sincos(position)
-		wantBobSin, wantBobCos := math.Sincos(position * 2.5)
-		if math.Abs(pathSin-wantPathSin) > 1e-11 || math.Abs(pathCos-wantPathCos) > 1e-11 ||
-			math.Abs(bobSin-wantBobSin) > 1e-11 || math.Abs(bobCos-wantBobCos) > 1e-11 {
-			t.Fatalf("cube motion recurrence drift at iteration %d", iteration)
-		}
-
 		for i := range dmaSin {
 			if iteration&1023 == 0 {
 				phase := cocoDMAPhaseOffsets3[i] + float64(iteration)*cocoDMAPhaseDeltas3[i]

@@ -16,6 +16,9 @@ The Phenomena and TCB scenes use the same `DNAFrames`, `Planes` and `PlaneRender
 The embedded Coco panel now shares `composite.CopperBars` with Bilizir and
 standalone Coco. Its integer clocks and 36 cached image strips remain visually
 identical across 1,200 compared frames of the isolated panel.
+Its twelve cubes now use `effects.SolidCubeTrain` with the panel's material and
+1,024-tick reanchored sine/cosine path. The shared component owns the phases,
+rotations and bounded draw batch; the original embedded scene remains intact.
 
 See the [DCK effect configuration guide](../../../lib/democonstructionkit/docs/EFFECT_OPTIONS.md) for the shared API and examples.
 
