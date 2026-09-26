@@ -134,9 +134,6 @@ type PhenomenaDemo struct {
 	percent        float64
 	blackRectWidth float64
 	blackRectShow  bool
-	photonY        float64
-	photonGravity  float64
-	photonBounce   float64
 	rasterbarY     float64
 	direction      float64
 
@@ -144,6 +141,7 @@ type PhenomenaDemo struct {
 	sliceProgram *scrolling.SliceProgram
 	rowWave      *motion.RecurrentRowWave
 	dnaDraw      scrolling.DNADrawConfig
+	photonMotion *motion.GravityBounce
 }
 
 type GradientStop struct {
@@ -194,8 +192,6 @@ func NewPhenomenaDemo() *PhenomenaDemo {
 		state:          StateMainDemoPhe, // Start directly at main demo
 		blackRectWidth: 800,
 		blackRectShow:  false, // No black rect at start
-		photonY:        184,
-		photonBounce:   -9.50,
 		rasterbarY:     -40,
 		direction:      1,
 	}
@@ -212,6 +208,10 @@ func NewPhenomenaDemo() *PhenomenaDemo {
 		panic(err)
 	}
 	d.rowWave = wave
+	d.photonMotion, err = motion.NewGravityBounce(presets.PhenomenaPhotonBounce())
+	if err != nil {
+		panic(err)
+	}
 	d.dnaDraw = scrolling.DNADrawConfig{SliceWidth: 2, ScaleX: 1.67, ScaleY: 1.875, OriginY: 195, Y: wave.At}
 	return d
 }
@@ -465,13 +465,7 @@ func (d *PhenomenaDemo) Update() error {
 		}
 
 	case StateDropPhotonPhe:
-		d.photonGravity += 0.30
-		d.photonY += d.photonGravity
-		if d.photonY > 445 {
-			d.photonGravity = d.photonBounce
-			d.photonBounce *= 0.70
-		}
-		if d.photonBounce >= -0.70 {
+		if d.photonMotion.Step() {
 			d.percent = 100
 			d.state = StatePhotonFadeToRedPhe
 		}
@@ -587,7 +581,7 @@ func (d *PhenomenaDemo) Draw(screen *ebiten.Image) {
 				screen.DrawImage(d.imgPhoton, op)
 			} else {
 				op := &ebiten.DrawImageOptions{}
-				op.GeoM.Translate(285, d.photonY)
+				op.GeoM.Translate(285, d.photonMotion.Position())
 				screen.DrawImage(d.imgPhoton, op)
 			}
 		}
