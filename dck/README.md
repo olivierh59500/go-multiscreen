@@ -25,6 +25,12 @@ The TCB panel shares the `Planes` and `PlaneRenderer` implementations with its
 standalone DCK demo. Artwork and authored layer order remain local.
 `composite.SceneTour` owns the camera's held views, easing, zoom, visibility
 masks, retained transition images and shader composition.
+Its `UnmanagedMask` gives only the TCB transition tile independent GPU storage.
+Across eleven complete source-to-DCK frame checkpoints through tick 9,600,
+this reduces the TCB transition differences from 182/146 pixels to 1/7 at
+ticks 600/1,200. Eight of the eleven checkpoints are exact; tick 9,600 retains
+the same ten-pixel difference as before. The other three tiles keep their
+default storage, which avoids a late-loop regression.
 
 The embedded Coco panel now shares `composite.CopperBars` with Bilizir and
 standalone Coco. Its integer clocks and 36 cached image strips remain visually

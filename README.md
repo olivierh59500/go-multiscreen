@@ -68,6 +68,12 @@ The built AAR and APK contain the same `libgojni.so`, and that library includes
 the `multiscreen-mega-demo/dck.NewPhenomenaDemo` symbol. This verifies that the
 measured APK contains the DCK implementation.
 
+The updated DCK APK was also installed on the Pixel 10a. A 12.42-second
+presentation sample spanning the TCB transition and adjacent screens contained
+744 distinct frame intervals: p95 16.740 ms, maximum 16.879 ms, none above
+20 ms. One process snapshot reported 273,005 KiB PSS and 153,808 KiB graphics
+memory; thermal status was 0. The snapshot is not a peak-memory measurement.
+
 ## Optional DCK version
 
 The original implementation remains at its original paths. Run it with `go run ./cmd/multiscreen`.
