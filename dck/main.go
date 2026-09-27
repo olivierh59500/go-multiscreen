@@ -844,7 +844,10 @@ func (g *MegaDemoGame) renderer() *composite.SceneTour {
 			image.Pt(0, 0), image.Pt(demoWidth, 0),
 			image.Pt(demoWidth, demoHeight), image.Pt(0, demoHeight),
 		},
-		ShaderSource: []byte(presets.MultiscreenCompositeShaderSource),
+		// The TCB glyph shader needs a stable independent render target; the
+		// other three tiles retain the lower-overhead default allocation.
+		UnmanagedMask: 1 << 1,
+		ShaderSource:  []byte(presets.MultiscreenCompositeShaderSource),
 		OnShaderError: func(err error) {
 			log.Printf("Failed to compile camera compositor shader: %v", err)
 		},
