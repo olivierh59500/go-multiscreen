@@ -40,7 +40,7 @@ func (c *dnaRenderCheck) Update() error {
 			c.reference.rotSpeed = .35
 		}
 	}
-	if err := c.scene.sliceProgram.Step(); err != nil {
+	if err := c.scene.dnaScroll.SliceProgramController().Step(); err != nil {
 		return err
 	}
 	c.reference.renderNextFrames(c.reference.rotSpeed)

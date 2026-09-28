@@ -131,17 +131,17 @@ func TestSharedSliceTransportMatchesOriginalThroughControlsAndLoops(t *testing.T
 				reference.rotSpeed = .35
 			}
 		}
-		if err := scene.sliceProgram.Step(); err != nil {
+		if err := scene.dnaScroll.SliceProgramController().Step(); err != nil {
 			t.Fatal(err)
 		}
-		sceneState := scene.sliceProgram.Clock().State()
+		sceneState := scene.dnaScroll.SliceProgramController().Clock().State()
 		reference.renderNextFrames(reference.rotSpeed)
-		token, strip := scene.sliceProgram.Stream().Cursor()
-		if token != reference.msgIndex || strip != reference.sliceCount || scene.sliceProgram.Stream().Head() != reference.scrollHead || sceneState.Paused != reference.pause || sceneState.PauseTicks != reference.pauseTime || sceneState.RotationStep != reference.rotSpeed || sceneState.Rotation != reference.scrollerRotation {
+		token, strip := scene.dnaScroll.SliceProgramController().Stream().Cursor()
+		if token != reference.msgIndex || strip != reference.sliceCount || scene.dnaScroll.SliceProgramController().Stream().Head() != reference.scrollHead || sceneState.Paused != reference.pause || sceneState.PauseTicks != reference.pauseTime || sceneState.RotationStep != reference.rotSpeed || sceneState.Rotation != reference.scrollerRotation {
 			t.Fatalf("transport or cue changed at tick %d", tick)
 		}
 		if tick%97 == 0 || sceneState.Paused {
-			if !slices.Equal(scene.sliceProgram.Stream().Slices(), reference.scrollChars[:]) {
+			if !slices.Equal(scene.dnaScroll.SliceProgramController().Stream().Slices(), reference.scrollChars[:]) {
 				t.Fatalf("strip history changed at tick %d", tick)
 			}
 		}

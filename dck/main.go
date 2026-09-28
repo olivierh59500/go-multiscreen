@@ -54,10 +54,9 @@ type PhenomenaDemo struct {
 	rasterGrad800 *ebiten.Image
 
 	// Scroller data
-	sliceProgram *scrolling.SliceProgram
-	rowWave      *motion.RecurrentRowWave
-	dnaDraw      scrolling.DNADrawConfig
-	hueMotion    *motion.WrapBank
+	dnaScroll *scrolling.Scrolling
+	rowWave   *motion.RecurrentRowWave
+	hueMotion *motion.WrapBank
 }
 
 const charsetPhenomena = presets.PhenomenaAlphabet
@@ -70,10 +69,6 @@ func NewPhenomenaDemo() *PhenomenaDemo {
 	if err != nil {
 		panic(err)
 	}
-	d.sliceProgram, err = scrolling.NewSliceProgram(programConfig)
-	if err != nil {
-		panic(err)
-	}
 	wave, err := motion.NewRecurrentRowWave(presets.PhenomenaDNARows())
 	if err != nil {
 		panic(err)
@@ -83,7 +78,13 @@ func NewPhenomenaDemo() *PhenomenaDemo {
 	if err != nil {
 		panic(err)
 	}
-	d.dnaDraw = scrolling.DNADrawConfig{SliceWidth: 2, ScaleX: 1.67, ScaleY: 1.875, OriginY: 195, Y: wave.At}
+	dnaDraw := scrolling.DNADrawConfig{SliceWidth: 2, ScaleX: 1.67, ScaleY: 1.875, OriginY: 195, Y: wave.At}
+	d.dnaScroll, err = scrolling.New(scrolling.Config{CuedSlices: &scrolling.CuedSlicesConfig{
+		Program: programConfig, Draw: dnaDraw,
+	}})
+	if err != nil {
+		panic(err)
+	}
 	return d
 }
 
@@ -135,7 +136,7 @@ func (d *PhenomenaDemo) Init() error {
 	}
 
 	// Bring message to start
-	if err := d.sliceProgram.Warmup(320, 1); err != nil {
+	if err := d.dnaScroll.SliceProgramController().Warmup(320, 1); err != nil {
 		return err
 	}
 
@@ -178,7 +179,7 @@ func (d *PhenomenaDemo) initCharacterFrames() error {
 	if err != nil {
 		return err
 	}
-	return nil
+	return d.dnaScroll.BindSliceFilm(d.dnaFrames)
 }
 
 func (d *PhenomenaDemo) Update() error {
@@ -189,7 +190,7 @@ func (d *PhenomenaDemo) Update() error {
 	}
 
 	d.hueMotion.Step()
-	if err := d.sliceProgram.Step(); err != nil {
+	if err := d.dnaScroll.Update(kit.Frame{}); err != nil {
 		return err
 	}
 	if err := d.rowWave.AdvanceFrame(); err != nil {
@@ -212,7 +213,7 @@ func (d *PhenomenaDemo) drawScroller(screen *ebiten.Image) {
 	if err := d.rowWave.BeginFrame(); err != nil {
 		panic(err)
 	}
-	d.sliceProgram.Draw(screen, d.dnaFrames, d.dnaDraw)
+	d.dnaScroll.Draw(screen)
 }
 
 // ==================== TCB DEMO (Demo2) ====================
