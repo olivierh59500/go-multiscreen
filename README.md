@@ -2,6 +2,25 @@
 
 Go/Ebitengine remake of the original DMA multiscreen mega demo.
 
+<!-- Project showcase -->
+## Screenshots
+
+[![Four demos running together: Phenomena, TCB, Viva TCB, and Coco Is The Best](docs/media/screenshot-1.png)](docs/media/screenshot-1.png)
+
+Four demos running together: Phenomena, TCB, Viva TCB, and Coco Is The Best.
+
+## Video
+
+[![Animated preview of Go Multiscreen](docs/media/preview.gif)](https://github.com/olivierh59500/go-multiscreen/raw/refs/heads/main/docs/media/preview.mp4)
+
+**[Watch or download the 24-second MP4 preview with sound](https://github.com/olivierh59500/go-multiscreen/raw/refs/heads/main/docs/media/preview.mp4)**
+
+This short showcase combines selected passages from the Go production.
+
+The animated image is silent; the MP4 includes the soundtrack.
+
+<!-- End project showcase -->
+
 ## Desktop
 
 ```sh
